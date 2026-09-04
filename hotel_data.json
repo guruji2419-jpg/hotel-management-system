@@ -1,0 +1,37 @@
+{
+    "101": {
+        "type": "Standard",
+        "price": 50,
+        "status": "Available",
+        "guest": null,
+        "nights": 0
+    },
+    "102": {
+        "type": "Standard",
+        "price": 50,
+        "status": "Available",
+        "guest": null,
+        "nights": 0
+    },
+    "103": {
+        "type": "Deluxe",
+        "price": 80,
+        "status": "Available",
+        "guest": null,
+        "nights": 0
+    },
+    "201": {
+        "type": "Deluxe",
+        "price": 80,
+        "status": "Available",
+        "guest": null,
+        "nights": 0
+    },
+    "202": {
+        "type": "Suite",
+        "price": 150,
+        "status": "Available",
+        "guest": null,
+        "nights": 0
+    }
+}
