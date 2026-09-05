@@ -3,140 +3,1258 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Grand Horizon - Hotel Management System</title>
-  <meta name="description" content="Modern Hotel Management Dashboard for Room Booking, Check-In, Check-Out & Analytics">
+  <title>Grand Horizon Hotel &amp; Resorts — Management System</title>
+  <meta name="description" content="Grand Horizon Hotel & Resorts — Luxury Dark Cinematic Hotel Management System">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    
-    <!-- Top Bar Navigation -->
-    <header>
-      <div class="brand">
-        <div class="brand-icon">🏨</div>
-        <div>
-          <h1>Grand Horizon</h1>
-          <p>Hotel Management System</p>
-        </div>
-      </div>
-      <button id="btn-quick-checkin" class="btn btn-primary">
-        <span>🛎️</span> Check-In Guest
-      </button>
-    </header>
 
-    <!-- Analytics Dashboard Stats -->
-    <div class="dashboard-grid">
-      <div class="glass-card stat-card">
-        <div class="stat-icon">🛏️</div>
-        <div class="stat-info">
-          <h3>Total Rooms</h3>
-          <div id="stat-total" class="stat-value">0</div>
-        </div>
-      </div>
+<!-- Toast Notification Container -->
+<div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-      <div class="glass-card stat-card">
-        <div class="stat-icon" style="color: #10b981;">🟢</div>
-        <div class="stat-info">
-          <h3>Available Rooms</h3>
-          <div id="stat-available" class="stat-value">0</div>
-        </div>
+<!-- ==========================================================================
+     1. FULLSCREEN CINEMATIC LOGIN
+     ========================================================================== -->
+<div id="auth-screen" class="auth-overlay">
+  <!-- Left visual panel -->
+  <div class="auth-visual">
+    <div class="auth-visual-bg" id="auth-bg"></div>
+    <div class="auth-visual-overlay"></div>
+    <div class="auth-visual-content">
+      <div class="auth-visual-badge">
+        <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+        Luxury Hospitality Platform
       </div>
-
-      <div class="glass-card stat-card">
-        <div class="stat-icon" style="color: #ef4444;">🔴</div>
-        <div class="stat-info">
-          <h3>Occupied Rooms</h3>
-          <div id="stat-occupied" class="stat-value">0</div>
+      <h1 class="auth-visual-title">GRAND HORIZON</h1>
+      <div class="auth-visual-sub">More Than A Stay — An Unrivaled Experience</div>
+      
+      <div class="auth-visual-features">
+        <div class="auth-feat-item">
+          <span class="auth-feat-num" id="login-feat-rooms">50+</span>
+          <span class="auth-feat-lbl">Luxury Suites</span>
         </div>
-      </div>
-
-      <div class="glass-card stat-card">
-        <div class="stat-icon" style="color: #6366f1;">💰</div>
-        <div class="stat-info">
-          <h3>Est. Revenue</h3>
-          <div id="stat-revenue" class="stat-value">$0</div>
+        <div class="auth-feat-item">
+          <span class="auth-feat-num">24/7</span>
+          <span class="auth-feat-lbl">Concierge Care</span>
+        </div>
+        <div class="auth-feat-item">
+          <span class="auth-feat-num">100%</span>
+          <span class="auth-feat-lbl">Seamless Flow</span>
         </div>
       </div>
     </div>
-
-    <!-- Main Section: Room Status Cards -->
-    <main>
-      <div class="section-header">
-        <h2 class="section-title">Room Directory & Status</h2>
-        <div style="display: flex; gap: 0.5rem;">
-          <button id="filter-all" class="btn btn-secondary active">All</button>
-          <button id="filter-available" class="btn btn-secondary">Available</button>
-          <button id="filter-occupied" class="btn btn-secondary">Occupied</button>
-        </div>
-      </div>
-
-      <!-- Container where JavaScript renders room cards -->
-      <div id="rooms-container" class="rooms-grid"></div>
-    </main>
-
-    <footer>
-      <p>© 2026 Grand Horizon Hotel System. Built with Python & JavaScript.</p>
-    </footer>
   </div>
 
-  <!-- Check-In Modal Form -->
-  <div id="modal-checkin" class="modal-overlay">
-    <div class="glass-card modal">
-      <div class="modal-header">
-        <h3 class="modal-title">🛎️ Guest Check-In</h3>
-        <button class="close-btn" onclick="closeModal('modal-checkin')">&times;</button>
+  <!-- Right login form panel -->
+  <div class="auth-card-panel">
+    <div class="auth-brand-emblem">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M2 22V10.5L12 2l10 8.5V22H14v-7h-4v7H2zm2-2h4v-7h8v7h4v-9.95L12 4.5 4 12.05V20z"/>
+      </svg>
+    </div>
+
+    <div class="auth-form-title">Staff Portal</div>
+    <div class="auth-form-desc">Sign in to manage reservations, guests, and hotel operations.</div>
+
+    <div class="auth-chips-title">Quick Demo Login</div>
+    <div class="auth-quick-chips">
+      <button type="button" class="auth-chip" onclick="fillLogin('admin', 'admin123')">
+        <span>👑 Admin</span>
+      </button>
+      <button type="button" class="auth-chip" onclick="fillLogin('manager', 'manager123')">
+        <span>💼 Manager</span>
+      </button>
+      <button type="button" class="auth-chip" onclick="fillLogin('reception', 'rec123')">
+        <span>🛎️ Reception</span>
+      </button>
+      <button type="button" class="auth-chip" onclick="fillLogin('cleaner', 'clean123')">
+        <span>🧹 Housekeeping</span>
+      </button>
+    </div>
+
+    <form id="form-login" autocomplete="off">
+      <div class="form-group">
+        <label class="form-label" for="login-user">Username</label>
+        <input type="text" id="login-user" class="form-control" placeholder="Enter username" required value="admin" autocomplete="username">
       </div>
-      <form id="form-checkin">
-        <div class="form-group">
-          <label class="form-label" for="select-room">Select Room</label>
-          <select id="select-room" class="form-control" required></select>
+      <div class="form-group">
+        <label class="form-label" for="login-pass">Password</label>
+        <input type="password" id="login-pass" class="form-control" placeholder="••••••••" required value="admin123" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;">
+        <svg viewBox="0 0 24 24"><path d="M11 7L9.6 8.4l2.6 2.6H2v2h10.2l-2.6 2.6L11 17l5-5-5-5zm9 12h-8v2h8c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/></svg>
+        Enter Portal
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Mobile Sidebar Backdrop -->
+<div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
+<!-- ==========================================================================
+     2. APPLICATION SHELL
+     ========================================================================== -->
+<div class="app-wrapper" id="app-wrapper">
+
+  <!-- LUXURY SIDEBAR -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M2 22V10.5L12 2l10 8.5V22H14v-7h-4v7H2zm2-2h4v-7h8v7h4v-9.95L12 4.5 4 12.05V20z"/>
+        </svg>
+      </div>
+      <div class="sidebar-brand-text">
+        <span class="sidebar-brand-name">Grand Horizon</span>
+        <span class="sidebar-brand-sub">Hotel &amp; Resorts</span>
+      </div>
+    </div>
+
+    <!-- Operations Section -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-group-title">Operations</div>
+      <ul class="sidebar-nav-list">
+        <li class="nav-item">
+          <button id="nav-dashboard" class="active" onclick="switchView('dashboard')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+            <span>Dashboard</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-bookings" onclick="switchView('bookings')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+            <span>Reservations</span>
+            <span class="nav-badge" id="badge-bookings-count">0</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-guests" onclick="switchView('guests')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+            <span>Guests</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-rooms" onclick="switchView('rooms')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/></svg>
+            <span>Rooms</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-checkin" onclick="switchView('checkin')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+            <span>Check-in / Out</span>
+          </button>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Management Section -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-group-title">Management</div>
+      <ul class="sidebar-nav-list">
+        <li class="nav-item">
+          <button id="nav-services" onclick="switchView('services')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>
+            <span>Billing &amp; Services</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-housekeeping" onclick="switchView('housekeeping')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M21.95 5.005l-3.306-.004c-1.036 0-1.887.712-2.115 1.673L15.724 8H5c-1.103 0-2 .897-2 2v8c0 1.103.897 2 2 2h14c1.103 0 2-.897 2-2V9.018c0-.003.001-.006.001-.009l.949-4.004zM19 18H5v-8h14v8z"/></svg>
+            <span>Housekeeping</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button id="nav-reports" onclick="switchView('reports')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+            <span>Reports &amp; Analytics</span>
+          </button>
+        </li>
+        <li class="nav-item admin-only">
+          <button id="nav-users" onclick="switchView('users')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+            <span>Staff &amp; Users</span>
+          </button>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Sidebar Bottom User Profile -->
+    <div class="sidebar-footer">
+      <div class="sidebar-user-card">
+        <div class="sidebar-avatar" id="sidebar-avatar">A</div>
+        <div class="sidebar-user-meta">
+          <div class="sidebar-user-name" id="user-display-name">System Admin</div>
+          <div class="sidebar-user-role" id="user-role-badge">Admin</div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="guest-name">Guest Full Name</label>
-          <input type="text" id="guest-name" class="form-control" placeholder="e.g. Eleanor Vance" required>
+        <button class="sidebar-logout-btn" onclick="handleLogout()" title="Sign Out" aria-label="Sign Out">
+          <svg viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN WRAPPER -->
+  <div class="main-wrapper">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle Menu">
+          <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        </button>
+
+        <!-- Omnibox Search -->
+        <div class="omnibox-search">
+          <svg class="omnibox-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+          <input type="text" id="global-search" placeholder="Search guests, rooms, reservations…" aria-label="Global search">
+          <span class="search-shortcut">⌘K</span>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="stay-nights">Duration (Nights)</label>
-          <input type="number" id="stay-nights" class="form-control" min="1" value="1" required>
+      </div>
+
+      <div class="topbar-right">
+        <!-- Live Clock -->
+        <div class="live-clock-badge">
+          <span class="live-clock-pulse"></span>
+          <span id="topbar-clock">10:45 AM</span>
+          <span style="opacity:0.4;">|</span>
+          <span id="topbar-date">Loading date…</span>
         </div>
-        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
-          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-checkin')">Cancel</button>
-          <button type="submit" class="btn btn-primary">Confirm Check-In</button>
+
+        <!-- Notification Center -->
+        <button class="icon-action-btn" id="btn-notifications" onclick="toggleNotifications()" title="Notifications" aria-label="Notifications">
+          <svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+          <span class="notif-badge-dot"></span>
+        </button>
+
+        <!-- User Profile Pill -->
+        <div class="topbar-user-pill" onclick="switchView('users')">
+          <div class="topbar-user-avatar" id="topbar-avatar">A</div>
+          <span class="topbar-user-name" id="topbar-user-name">Admin</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- VIEW CONTAINER -->
+    <main class="view-container">
+
+      <!-- ====================================================================
+           1. DASHBOARD VIEW
+           ==================================================================== -->
+      <section id="view-dashboard" class="view-section active">
+        <!-- Cinematic Hero Banner -->
+        <div class="dash-hero-container">
+          <div class="dash-hero-bg"></div>
+          <div class="dash-hero-overlay"></div>
+          <div class="dash-hero-content">
+            <div class="dash-hero-tag">
+              <svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:currentColor;"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+              Grand Horizon Operations
+            </div>
+            <div class="dash-hero-greeting" id="dash-greeting">Welcome back</div>
+            <div class="dash-hero-sub" id="dash-welcome-title">Manage your hotel, beautifully.</div>
+          </div>
+        </div>
+
+        <!-- Bespoke 7 KPI Cards Grid -->
+        <div class="kpi-grid-luxury">
+          <div class="kpi-card-lux kpi-gold">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Total Rooms</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-total">—</div>
+            <div class="kpi-sub-meta"><span>Property Inventory</span><span style="color:var(--gold-light);">100% Asset</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-green">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Available</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-available">—</div>
+            <div class="kpi-sub-meta"><span>Ready for check-in</span><span style="color:var(--status-avail);">Live Free</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-red">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Occupied</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-occupied">—</div>
+            <div class="kpi-sub-meta"><span>Active guests staying</span><span id="d-occupancy-pct" style="color:var(--status-occ);">—%</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-amber">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Reserved</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-reserved">—</div>
+            <div class="kpi-sub-meta"><span>Upcoming bookings</span><span style="color:var(--status-res);">Confirmed</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-cyan">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Check-ins</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-checkins">—</div>
+            <div class="kpi-sub-meta"><span>Today's active stays</span><span style="color:var(--status-clean);">Arrivals</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-purple">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Housekeeping</span>
+              </div>
+              <div class="kpi-icon-pill">
+                <svg viewBox="0 0 24 24"><path d="M21.95 5.005l-3.306-.004c-1.036 0-1.887.712-2.115 1.673L15.724 8H5c-1.103 0-2 .897-2 2v8c0 1.103.897 2 2 2h14c1.103 0 2-.897 2-2V9.018c0-.003.001-.006.001-.009l.949-4.004z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-cleaning">—</div>
+            <div class="kpi-sub-meta"><span>Rooms in service</span><span style="color:var(--status-inspect);">Cleaning</span></div>
+          </div>
+
+          <div class="kpi-card-lux kpi-featured-revenue">
+            <div class="kpi-top-row">
+              <div class="kpi-label-wrap">
+                <span class="kpi-accent-dot"></span>
+                <span class="kpi-card-label">Total Revenue</span>
+              </div>
+              <div class="kpi-icon-pill" style="background:var(--gold-dim);color:var(--gold-light);">
+                <svg viewBox="0 0 24 24"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>
+              </div>
+            </div>
+            <div class="kpi-main-val" id="d-revenue">—</div>
+            <div class="kpi-sub-meta"><span>All-Time Invoiced</span><span style="color:var(--gold-light);font-weight:700;">PROFIT</span></div>
+          </div>
+        </div>
+
+        <!-- Quick Action Ribbon -->
+        <div class="quick-action-strip">
+          <span class="quick-action-label">Quick Actions</span>
+          <button class="btn-quick-act" onclick="openNewBookingModal()">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            New Reservation
+          </button>
+          <button class="btn-quick-act" onclick="openAddGuestModal()">
+            <svg viewBox="0 0 24 24"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Add Guest
+          </button>
+          <button class="btn-quick-act" onclick="startGuidedCheckIn()">
+            <svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65z"/></svg>
+            Guided Check-In
+          </button>
+          <button class="btn-quick-act" onclick="startGuidedCheckOut()">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h10v2H7z"/></svg>
+            Check-Out &amp; Bill
+          </button>
+          <button class="btn-quick-act admin-only" onclick="openAddRoomModal()">
+            <svg viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z"/></svg>
+            Add Room
+          </button>
+          <button class="btn-quick-act" onclick="openAddServiceChargeModal()">
+            <svg viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>
+            Add Service Charge
+          </button>
+        </div>
+
+        <!-- Interactive Room Grid on Dashboard -->
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Property Status</div>
+            <h3>Interactive Room Visualization</h3>
+          </div>
+          <div class="filter-pills-group" id="dash-room-filters">
+            <button class="filter-pill-btn active" onclick="filterDashRooms('ALL')">All Rooms</button>
+            <button class="filter-pill-btn" onclick="filterDashRooms('Available')">Available</button>
+            <button class="filter-pill-btn" onclick="filterDashRooms('Occupied')">Occupied</button>
+            <button class="filter-pill-btn" onclick="filterDashRooms('Cleaning')">Cleaning</button>
+            <button class="filter-pill-btn" onclick="filterDashRooms('Reserved')">Reserved</button>
+          </div>
+        </div>
+
+        <div class="rooms-grid-luxury" id="dash-rooms-grid" style="margin-bottom:40px;">
+          <!-- Dynamically populated room cards -->
+        </div>
+
+        <!-- Active Hotel Stays Table -->
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Front Desk</div>
+            <h3>Active Guest Stays</h3>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="switchView('checkin')">View Check-in Directory →</button>
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Booking Code</th>
+                <th>Room</th>
+                <th>Guest Name</th>
+                <th>Check-In</th>
+                <th>Check-Out</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="table-active-stays">
+              <tr><td colspan="7"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading active stays…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           2. RESERVATIONS VIEW
+           ==================================================================== -->
+      <section id="view-bookings" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Bookings &amp; Schedules</div>
+            <h2>Reservation Management</h2>
+            <p>Overlap-protected reservations calendar and guest booking directory</p>
+          </div>
+          <div class="view-header-actions">
+            <div class="filter-pills-group">
+              <button class="filter-pill-btn active" id="btn-view-booking-list" onclick="setBookingViewMode('list')">List View</button>
+              <button class="filter-pill-btn" id="btn-view-booking-cal" onclick="setBookingViewMode('calendar')">Timeline Calendar</button>
+            </div>
+            <button class="btn btn-primary" onclick="openNewBookingModal()">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              Create Reservation
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="room-filter-toolbar">
+          <div style="display:flex; gap:12px; flex-wrap:wrap; flex:1;">
+            <input type="text" class="form-control" id="booking-search" placeholder="Search by guest, room, or booking code…" oninput="filterBookings()" style="max-width:320px;">
+            <select class="form-control" id="booking-filter-status" onchange="filterBookings()" style="max-width:180px;">
+              <option value="">All Statuses</option>
+              <option value="Confirmed">Confirmed</option>
+              <option value="Checked-in">Checked-in</option>
+              <option value="Checked-out">Checked-out</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Bookings List Table -->
+        <div class="table-luxury-wrap" id="booking-list-container">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Booking Code</th>
+                <th>Guest</th>
+                <th>Room</th>
+                <th>Dates</th>
+                <th>Advance</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="table-bookings">
+              <tr><td colspan="7"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading reservations…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Timeline Calendar View -->
+        <div id="booking-calendar-container" style="display:none;" class="table-luxury-wrap">
+          <div id="calendar-timeline-grid" style="padding:24px;">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           3. GUESTS VIEW
+           ==================================================================== -->
+      <section id="view-guests" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Clientele Records</div>
+            <h2>Guest Directory</h2>
+            <p>Comprehensive profiles, identification, stay histories, and guest notes</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAddGuestModal()">
+            <svg viewBox="0 0 24 24"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Register Guest
+          </button>
+        </div>
+
+        <div class="room-filter-toolbar">
+          <input type="text" class="form-control" id="guest-search" placeholder="Search by name, phone, email, or ID number…" oninput="loadGuests(this.value)" style="max-width:380px;">
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Guest ID</th>
+                <th>Full Name</th>
+                <th>Contact</th>
+                <th>Location</th>
+                <th>ID Verification</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="table-guests">
+              <tr><td colspan="6"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading guests…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           4. ROOM MANAGEMENT VIEW
+           ==================================================================== -->
+      <section id="view-rooms" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Property Inventory</div>
+            <h2>Room Management</h2>
+            <p>Live status, pricing tiers, amenities, and floor allocations</p>
+          </div>
+          <button class="btn btn-primary admin-only" onclick="openAddRoomModal()">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            Add New Room
+          </button>
+        </div>
+
+        <div class="room-filter-toolbar">
+          <div style="display:flex; gap:12px; flex-wrap:wrap; flex:1;">
+            <select class="form-control" id="room-filter-status" onchange="filterRooms()" style="max-width:160px;">
+              <option value="">All Statuses</option>
+              <option value="Available">Available</option>
+              <option value="Occupied">Occupied</option>
+              <option value="Reserved">Reserved</option>
+              <option value="Cleaning">Cleaning</option>
+              <option value="Maintenance">Maintenance</option>
+            </select>
+            <select class="form-control" id="room-filter-type" onchange="filterRooms()" style="max-width:160px;">
+              <option value="">All Types</option>
+              <option value="Standard">Standard</option>
+              <option value="Deluxe">Deluxe</option>
+              <option value="Suite">Suite</option>
+              <option value="Executive">Executive</option>
+            </select>
+            <input type="text" class="form-control" id="room-search" placeholder="Search room number or amenities…" oninput="filterRooms()" style="max-width:240px;">
+          </div>
+        </div>
+
+        <div class="rooms-grid-luxury" id="rooms-directory-grid">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           5. GUIDED CHECK-IN / CHECK-OUT VIEW
+           ==================================================================== -->
+      <section id="view-checkin" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Front Desk Workflows</div>
+            <h2>Check-In &amp; Check-Out Terminal</h2>
+            <p>Guided multi-step guest arrivals and departure billing workflows</p>
+          </div>
+          <div class="filter-pills-group">
+            <button class="filter-pill-btn active" id="btn-flow-checkin" onclick="showCheckFlow('checkin')">Guided Check-In</button>
+            <button class="filter-pill-btn" id="btn-flow-checkout" onclick="showCheckFlow('checkout')">Guided Check-Out</button>
+            <button class="filter-pill-btn" id="btn-flow-directory" onclick="showCheckFlow('directory')">Live Active Stays</button>
+          </div>
+        </div>
+
+        <!-- CHECK-IN WIZARD STEPPER -->
+        <div class="stepper-container" id="flow-checkin-wrap">
+          <div class="stepper-progress-bar">
+            <div class="step-node active" id="ci-step-1">
+              <div class="step-circle">1</div>
+              <div class="step-label">Find Guest</div>
+            </div>
+            <div class="step-node" id="ci-step-2">
+              <div class="step-circle">2</div>
+              <div class="step-label">Select Room</div>
+            </div>
+            <div class="step-node" id="ci-step-3">
+              <div class="step-circle">3</div>
+              <div class="step-label">Stay Details</div>
+            </div>
+            <div class="step-node" id="ci-step-4">
+              <div class="step-circle">4</div>
+              <div class="step-label">Confirmation</div>
+            </div>
+          </div>
+
+          <!-- Wizard Form Container -->
+          <form id="wizard-checkin-form">
+            <div class="stepper-step-panel active" id="ci-panel-1">
+              <h4 style="margin-bottom:14px;color:var(--text-pure);">Step 1: Guest Identification</h4>
+              <div class="form-group">
+                <label class="form-label">Search Guest Name or Enter Walk-in Name *</label>
+                <input type="text" id="wiz-ci-guest" class="form-control" placeholder="e.g. Johnathan Smith" required>
+              </div>
+              <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button type="button" class="btn btn-primary" onclick="nextCheckInStep(2)">Proceed to Room Selection →</button>
+              </div>
+            </div>
+
+            <div class="stepper-step-panel" id="ci-panel-2">
+              <h4 style="margin-bottom:14px;color:var(--text-pure);">Step 2: Assign Available Room</h4>
+              <div class="form-group">
+                <label class="form-label">Select Available Room *</label>
+                <select id="wiz-ci-room" class="form-control" required>
+                  <option value="">— Select Room —</option>
+                </select>
+              </div>
+              <div style="display:flex; justify-content:space-between; margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="nextCheckInStep(1)">← Back</button>
+                <button type="button" class="btn btn-primary" onclick="nextCheckInStep(3)">Proceed to Stay Details →</button>
+              </div>
+            </div>
+
+            <div class="stepper-step-panel" id="ci-panel-3">
+              <h4 style="margin-bottom:14px;color:var(--text-pure);">Step 3: Length of Stay</h4>
+              <div class="form-group">
+                <label class="form-label">Number of Nights *</label>
+                <input type="number" id="wiz-ci-nights" class="form-control" value="1" min="1" required>
+              </div>
+              <div style="display:flex; justify-content:space-between; margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="nextCheckInStep(2)">← Back</button>
+                <button type="button" class="btn btn-primary" onclick="nextCheckInStep(4)">Review &amp; Confirm →</button>
+              </div>
+            </div>
+
+            <div class="stepper-step-panel" id="ci-panel-4">
+              <h4 style="margin-bottom:14px;color:var(--gold-light);">Step 4: Final Verification</h4>
+              <div id="wiz-ci-summary" style="background:var(--charcoal-deep);padding:18px;border-radius:var(--radius-md);border:1px solid var(--gold-border);margin-bottom:20px;">
+                <!-- Filled dynamically -->
+              </div>
+              <div style="display:flex; justify-content:space-between; margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="nextCheckInStep(3)">← Back</button>
+                <button type="submit" class="btn btn-primary">Complete Check-In &amp; Assign Key 🔑</button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <!-- CHECK-OUT WIZARD STEPPER -->
+        <div class="stepper-container" id="flow-checkout-wrap" style="display:none;">
+          <h4 style="margin-bottom:18px;color:var(--text-pure);">Guest Check-Out &amp; Invoice Settlement</h4>
+          <form id="wizard-checkout-form">
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label">Select Active Occupied Room *</label>
+                <select id="wiz-co-room" class="form-control" onchange="updateCheckOutPreview(this.value)" required>
+                  <option value="">— Select Room —</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Additional Services / Mini-bar ($)</label>
+                <input type="number" id="wiz-co-services" class="form-control" value="0" min="0" step="0.5">
+              </div>
+            </div>
+            <div id="wiz-co-preview" style="margin-top:16px;background:var(--charcoal-deep);padding:18px;border-radius:var(--radius-md);border:1px solid var(--border-subtle);">
+              <p style="color:var(--text-muted);font-size:0.85rem;">Select an occupied room above to preview checkout totals.</p>
+            </div>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+              <button type="submit" class="btn btn-primary">Finalize Check-Out &amp; Generate Invoice 🧾</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Directory Table Container -->
+        <div class="table-luxury-wrap" id="flow-directory-wrap" style="display:none;">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Type</th>
+                <th>Guest Name</th>
+                <th>Check-In</th>
+                <th>Check-Out</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="table-checkin-directory">
+              <tr><td colspan="7"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading stays…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           6. SERVICES & BILLING VIEW
+           ==================================================================== -->
+      <section id="view-services" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Amenities &amp; Dining</div>
+            <h2>Billing &amp; Hotel Services</h2>
+            <p>Catalog of hotel amenities, dining, and room charge addons</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAddServiceChargeModal()">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            Charge Service to Room
+          </button>
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Item ID</th>
+                <th>Service Offering</th>
+                <th>Category</th>
+                <th>Unit Price</th>
+              </tr>
+            </thead>
+            <tbody id="table-services">
+              <tr><td colspan="4"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading services catalog…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           7. HOUSEKEEPING VIEW
+           ==================================================================== -->
+      <section id="view-housekeeping" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Room Sanitation &amp; Upkeep</div>
+            <h2>Housekeeping Board</h2>
+            <p>Real-time room cleaning status, staff assignments, and inspection stages</p>
+          </div>
+        </div>
+
+        <!-- 5-Column Kanban Board -->
+        <div class="hk-kanban-board" id="hk-board">
+          <!-- Dynamically populated Kanban columns: Dirty, Cleaning, Clean, Inspected, Maintenance -->
+        </div>
+
+        <!-- Detailed Table View -->
+        <div class="view-header" style="margin-top:36px;">
+          <div class="view-header-title">
+            <div class="section-subtitle">Log Sheet</div>
+            <h3>Detailed Room Status List</h3>
+          </div>
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>Room</th>
+                <th>Type</th>
+                <th>Floor</th>
+                <th>Room Status</th>
+                <th>Cleaning Status</th>
+                <th>Assigned Staff</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="table-housekeeping">
+              <tr><td colspan="7"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading housekeeping records…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           8. REPORTS & ANALYTICS VIEW
+           ==================================================================== -->
+      <section id="view-reports" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Intelligence &amp; Metrics</div>
+            <h2>Reports &amp; Analytics Dashboard</h2>
+            <p>Operational yield, occupancy metrics, and CSV reporting downloads</p>
+          </div>
+          <div class="view-header-actions">
+            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('guests')">
+              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              Export Guests CSV
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('bookings')">
+              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              Export Bookings CSV
+            </button>
+          </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="charts-grid">
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <h4>Revenue &amp; Booking Trends</h4>
+              <span class="badge-lux badge-Available">Operational Yield</span>
+            </div>
+            <div class="chart-canvas-wrap">
+              <canvas id="chart-revenue"></canvas>
+            </div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-card-header">
+              <h4>Occupancy Breakdown</h4>
+              <span class="badge-lux badge-Reserved">Live Ratio</span>
+            </div>
+            <div class="chart-canvas-wrap">
+              <canvas id="chart-occupancy"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Summary KPI Cards -->
+        <div class="kpi-grid-luxury" id="report-stats">
+          <!-- Dynamically filled -->
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           9. STAFF & USERS VIEW
+           ==================================================================== -->
+      <section id="view-users" class="view-section admin-only">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Access &amp; Security</div>
+            <h2>Staff &amp; User Accounts</h2>
+            <p>Manage employee credentials and Role-Based Access Control (RBAC)</p>
+          </div>
+          <button class="btn btn-primary" onclick="openAddUserModal()">
+            <svg viewBox="0 0 24 24"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            Add Staff Member
+          </button>
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>User ID</th>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th>System Role</th>
+                <th>Created Date</th>
+              </tr>
+            </thead>
+            <tbody id="table-users">
+              <tr><td colspan="5"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading staff accounts…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ==========================================================================
+     MODALS
+     ========================================================================== -->
+
+<!-- 1. Add / Edit Guest Modal -->
+<div id="modal-guest" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Register Guest Profile</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-guest')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-guest">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="g-name">Full Name *</label>
+            <input type="text" id="g-name" class="form-control" placeholder="Lord Alexander Sterling" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="g-phone">Phone Number *</label>
+            <input type="tel" id="g-phone" class="form-control" placeholder="+1 (555) 234-5678" required>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="g-email">Email Address</label>
+            <input type="email" id="g-email" class="form-control" placeholder="guest@residence.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="g-city">City / Country</label>
+            <input type="text" id="g-city" class="form-control" placeholder="London, UK">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="g-idtype">ID Proof Type</label>
+            <input type="text" id="g-idtype" class="form-control" value="Passport / National ID">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="g-idnum">ID Document Number</label>
+            <input type="text" id="g-idnum" class="form-control" placeholder="P98765432">
+          </div>
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-guest')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Guest Profile</button>
         </div>
       </form>
     </div>
   </div>
+</div>
 
-  <!-- Check-Out / Invoice Receipt Modal -->
-  <div id="modal-checkout" class="modal-overlay">
-    <div class="glass-card modal">
-      <div class="modal-header">
-        <h3 class="modal-title">🧾 Guest Check-Out & Bill</h3>
-        <button class="close-btn" onclick="closeModal('modal-checkout')">&times;</button>
-      </div>
-      
-      <div class="invoice-box">
-        <div class="invoice-row"><span>Guest Name:</span><strong id="invoice-guest"></strong></div>
-        <div class="invoice-row"><span>Room Number:</span><strong id="invoice-room"></strong></div>
-        <div class="invoice-row"><span>Room Type:</span><span id="invoice-type"></span></div>
-        <div class="invoice-row"><span>Rate / Night:</span><span id="invoice-rate"></span></div>
-        <div class="invoice-row"><span>Nights Stayed:</span><span id="invoice-nights"></span></div>
-        <div class="invoice-row"><span>Service Addons:</span><span id="invoice-services">$0.00</span></div>
-        <div class="invoice-row invoice-total"><span>FINAL TOTAL:</span><span id="invoice-total"></span></div>
-      </div>
+<!-- 2. New Reservation Modal (Overlap-Checked) -->
+<div id="modal-booking" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Create Reservation</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-booking')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-booking">
+        <div class="form-group">
+          <label class="form-label" for="b-guest">Select Guest *</label>
+          <select id="b-guest" class="form-control" required>
+            <option value="">— Select Guest Profile —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="b-room">Select Luxury Room *</label>
+          <select id="b-room" class="form-control" required>
+            <option value="">— Select Room —</option>
+          </select>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="b-in">Check-In Date *</label>
+            <input type="date" id="b-in" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="b-out">Check-Out Date *</label>
+            <input type="date" id="b-out" class="form-control" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="b-advance">Advance Deposit ($)</label>
+          <input type="number" id="b-advance" class="form-control" value="0" min="0" step="0.5">
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-booking')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Confirm Reservation</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
-      <div class="form-group">
-        <label class="form-label" for="addon-services">Add Room Service / Mini-Bar ($)</label>
-        <input type="number" id="addon-services" class="form-control" min="0" value="0" step="5">
-      </div>
+<!-- 3. Add Room Modal (Admin Only) -->
+<div id="modal-room" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Add Property Room</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-room')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-room">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="r-num">Room Number *</label>
+            <input type="text" id="r-num" class="form-control" placeholder="301" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="r-floor">Floor Number</label>
+            <input type="number" id="r-floor" class="form-control" value="3" min="1">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="r-type">Room Type</label>
+            <select id="r-type" class="form-control">
+              <option>Standard</option>
+              <option>Deluxe</option>
+              <option>Suite</option>
+              <option>Executive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="r-bed">Bedding</label>
+            <select id="r-bed" class="form-control">
+              <option>Single</option>
+              <option>Double</option>
+              <option>Queen</option>
+              <option>King</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="r-price">Price Per Night ($) *</label>
+            <input type="number" id="r-price" class="form-control" value="120" min="1" step="0.5" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="r-capacity">Guest Capacity</label>
+            <input type="number" id="r-capacity" class="form-control" value="2" min="1">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="r-amenities">Amenities</label>
+          <input type="text" id="r-amenities" class="form-control" placeholder="WiFi, Ocean View, Mini-bar, Jacuzzi, Balcony">
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-room')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Room</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
-      <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-checkout')">Cancel</button>
-        <button id="btn-confirm-checkout" class="btn btn-danger">Complete Check-Out</button>
+<!-- 4. Add Service Charge Modal -->
+<div id="modal-service" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Add Room Service Charge</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-service')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-add-service">
+        <div class="form-group">
+          <label class="form-label" for="s-booking">Active Guest Stay *</label>
+          <select id="s-booking" class="form-control" required>
+            <option value="">— Select Active Booking —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="s-name">Service Item Description *</label>
+          <input type="text" id="s-name" class="form-control" placeholder="e.g. Gourmet Champagne Dinner" required>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="s-qty">Quantity</label>
+            <input type="number" id="s-qty" class="form-control" value="1" min="1">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="s-price">Unit Price ($)</label>
+            <input type="number" id="s-price" class="form-control" value="25" step="0.5">
+          </div>
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-service')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Apply Charge</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Housekeeping Update Modal -->
+<div id="modal-hk" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Update Housekeeping Status</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-hk')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-hk">
+        <div class="form-group">
+          <label class="form-label" for="hk-room">Room Number</label>
+          <input type="text" id="hk-room" class="form-control" readonly>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="hk-status">Cleaning &amp; Sanitation Status</label>
+          <select id="hk-status" class="form-control">
+            <option value="Clean">Clean (Ready for Guests)</option>
+            <option value="Cleaning">Cleaning in Progress</option>
+            <option value="Dirty">Dirty (Needs Service)</option>
+            <option value="Inspected">Inspected &amp; Approved</option>
+            <option value="Maintenance">Under Maintenance</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="hk-staff">Assigned Housekeeping Officer</label>
+          <input type="text" id="hk-staff" class="form-control" value="Housekeeping Supervisor">
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-hk')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Status</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 6. Add Staff User Modal (Admin Only) -->
+<div id="modal-user" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Create Staff Account</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-user')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <form id="form-user">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="u-username">Username *</label>
+            <input type="text" id="u-username" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="u-fullname">Full Name *</label>
+            <input type="text" id="u-fullname" class="form-control" required>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="u-password">Password *</label>
+            <input type="password" id="u-password" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="u-role">Role &amp; Permissions</label>
+            <select id="u-role" class="form-control">
+              <option value="Receptionist">Receptionist</option>
+              <option value="Housekeeping">Housekeeping</option>
+              <option value="Manager">Manager</option>
+              <option value="Admin">Admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-ghost" onclick="closeModal('modal-user')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- 7. Luxury Printable Invoice Modal -->
+<div id="modal-invoice" class="modal-overlay">
+  <div class="modal-box invoice-modal-box">
+    <div class="modal-header">
+      <h3>Hotel Folio &amp; Invoice</h3>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-primary btn-sm" onclick="window.print()">
+          <svg viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/></svg>
+          Print Invoice
+        </button>
+        <button class="modal-close-btn" onclick="closeModal('modal-invoice')" aria-label="Close">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="modal-body" id="invoice-modal-content">
+      <!-- Dynamically generated invoice paper -->
+    </div>
+  </div>
+</div>
+
+<!-- 8. Confirmation Dialog Modal -->
+<div id="modal-confirm" class="modal-overlay">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-header">
+      <h3 id="confirm-title">Confirm Action</h3>
+      <button class="modal-close-btn" onclick="cancelConfirm()" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p id="confirm-message" style="color:var(--text-muted); font-size:0.92rem; line-height:1.5;"></p>
+      <div class="form-actions" style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
+        <button class="btn btn-ghost" onclick="cancelConfirm()">Cancel</button>
+        <button class="btn btn-danger" id="confirm-proceed-btn">Confirm</button>
       </div>
     </div>
   </div>
+</div>
 
-  <script src="app.js"></script>
+<!-- 9. Guest Profile Slide-Over Drawer -->
+<div id="drawer-guest" class="drawer-overlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div>
+        <div class="section-subtitle">Guest Portfolio</div>
+        <h3 id="drawer-guest-name">Guest Profile</h3>
+      </div>
+      <button class="modal-close-btn" onclick="closeDrawer('drawer-guest')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+
+    <!-- Drawer Tabs -->
+    <div class="drawer-tabs">
+      <button class="drawer-tab-btn active" onclick="switchDrawerTab('profile')">Profile</button>
+      <button class="drawer-tab-btn" onclick="switchDrawerTab('stays')">Stay History</button>
+      <button class="drawer-tab-btn" onclick="switchDrawerTab('payments')">Payments</button>
+      <button class="drawer-tab-btn" onclick="switchDrawerTab('notes')">Notes</button>
+    </div>
+
+    <div class="drawer-body" id="drawer-guest-body">
+      <!-- Dynamically filled with tabs -->
+    </div>
+  </div>
+</div>
+
+<!-- 10. Room Inspection Slide-Over Drawer -->
+<div id="drawer-room" class="drawer-overlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div>
+        <div class="section-subtitle">Room Dossier</div>
+        <h3 id="drawer-room-title">Room 101</h3>
+      </div>
+      <button class="modal-close-btn" onclick="closeDrawer('drawer-room')" aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawer-room-body">
+      <!-- Filled dynamically -->
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>

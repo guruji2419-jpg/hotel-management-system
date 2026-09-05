@@ -1,5 +1,9 @@
 {
   "version": 2,
-  "name": "grand-horizon-hotel-system",
-  "cleanUrls": true
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    }
+  ]
 }

@@ -4,7 +4,8 @@
         "price": 50,
         "status": "Available",
         "guest": null,
-        "nights": 0
+        "nights": 0,
+        "services": 0
     },
     "102": {
         "type": "Standard",
@@ -30,8 +31,9 @@
     "202": {
         "type": "Suite",
         "price": 150,
-        "status": "Available",
-        "guest": null,
-        "nights": 0
+        "status": "Occupied",
+        "guest": "Abdul Kalam",
+        "nights": 7,
+        "services": 0
     }
 }
