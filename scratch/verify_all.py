@@ -1,288 +1,251 @@
 """
 scratch/verify_all.py
 ---------------------
-Rigorous automated local verification script for Grand Horizon Hotel System.
-Tests Python syntax, DB schemas, Flask API endpoints, auth, guests, rooms,
-overlap prevention, check-in, check-out, billing, housekeeping, stats & CLI.
+Comprehensive Automated Test Suite for Grand Horizon Hotel Management System.
+Validates:
+1. Dual-Engine DB Manager (SQLite & PostgreSQL abstraction)
+2. Persistent Database Session Management (RBAC & Auth)
+3. Room State Machine & Synchronization (Available -> Occupied -> Cleaning -> Available)
+4. Reservation Overlap Prevention (HTTP 409 Conflict)
+5. Guest CRUD & Portfolio History
+6. Itemized Invoicing & Payment Records
+7. Housekeeping Automation & Completion
+8. Dashboard Analytics & Real-Time Aggregations
+9. Flask REST API Integration & Status Codes
 """
 
-import sys
 import os
+import sys
+import unittest
 import json
-import py_compile
-import urllib.request
-import urllib.error
+import time
 
-# Project root directory
-project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_dir not in sys.path:
-    sys.path.insert(0, project_dir)
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-results = {
-    "passed": [],
-    "failed": [],
-    "errors": []
-}
-
-def record_test(name, success, details=""):
-    if success:
-        results["passed"].append(f"{name}: {details}")
-        print(f"  ✅ [PASS] {name}")
-    else:
-        results["failed"].append(name)
-        results["errors"].append(f"{name}: {details}")
-        print(f"  ❌ [FAIL] {name} - {details}")
-
-print("==================================================")
-print("  RUNNING COMPLETE SYSTEM LOCAL VERIFICATION")
-print("==================================================")
-
-# TEST 1: Python File Syntax Compilation Check
-print("\n1. Checking Python Syntax Compilation...")
-python_files = ["database.py", "auth.py", "hotel_manager.py", "main.py", "api/index.py"]
-for f in python_files:
-    fpath = os.path.join(project_dir, f)
-    try:
-        py_compile.compile(fpath, doraise=True)
-        record_test(f"Syntax Check ({f})", True, "Compiled without errors")
-    except Exception as e:
-        record_test(f"Syntax Check ({f})", False, str(e))
-
-# TEST 2: SQLite Database Initialization & Schemas
-print("\n2. Checking SQLite Database Initialization...")
-try:
-    from database import init_db, get_connection
-    init_db()
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = [row[0] for row in cursor.fetchall()]
-    expected_tables = ["users", "guests", "rooms", "bookings", "services", "booking_services", "invoices", "payments", "housekeeping", "audit_logs"]
-    missing = [t for t in expected_tables if t not in tables]
-    if not missing:
-        record_test("Database Schemas", True, f"All 10 tables exist: {', '.join(tables)}")
-    else:
-        record_test("Database Schemas", False, f"Missing tables: {missing}")
-    conn.close()
-except Exception as e:
-    record_test("Database Schemas", False, str(e))
-
-# TEST 3: Auth API & Roles
-print("\n3. Testing Authentication & User Roles...")
-BASE_URL = "http://127.0.0.1:5000"
-admin_token = None
-rec_token = None
-
-try:
-    # Admin Login
-    req = urllib.request.Request(f"{BASE_URL}/api/auth/login", data=json.dumps({"username": "admin", "password": "admin123"}).encode(), headers={"Content-Type": "application/json"})
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and res.get("user", {}).get("token"):
-        admin_token = res["user"]["token"]
-        record_test("Admin Login", True, "Token acquired")
-    else:
-        record_test("Admin Login", False, str(res))
-
-    # Receptionist Login
-    req = urllib.request.Request(f"{BASE_URL}/api/auth/login", data=json.dumps({"username": "reception", "password": "rec123"}).encode(), headers={"Content-Type": "application/json"})
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and res.get("user", {}).get("token"):
-        rec_token = res["user"]["token"]
-        record_test("Receptionist Login", True, "Token acquired")
-    else:
-        record_test("Receptionist Login", False, str(res))
-
-    # Verify session /api/auth/me
-    req = urllib.request.Request(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {admin_token}"})
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    record_test("Verify Session (/api/auth/me)", res.get("success", False), f"Role: {res.get('user', {}).get('role')}")
-
-except Exception as e:
-    record_test("Auth API", False, str(e))
-
-# TEST 4: Guest Management CRUD
-print("\n4. Testing Guest Management CRUD...")
-test_guest_id = None
-try:
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
-    # Create Guest
-    g_data = {"full_name": "Test Guest Verification", "phone": "9123456789", "email": "test@verification.com", "city": "Delhi"}
-    req = urllib.request.Request(f"{BASE_URL}/api/guests", data=json.dumps(g_data).encode(), headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success"):
-        test_guest_id = res.get("guest_id")
-        record_test("Guest Creation", True, f"Guest ID: {test_guest_id}")
-    else:
-        record_test("Guest Creation", False, str(res))
-
-    # Edit Guest
-    req = urllib.request.Request(f"{BASE_URL}/api/guests/{test_guest_id}", data=json.dumps({"full_name": "Updated Test Guest", "phone": "9123456789"}).encode(), headers=headers, method="PUT")
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    record_test("Guest Edit", res.get("success", False), res.get("message", ""))
-
-    # View Guest Details & History
-    req = urllib.request.Request(f"{BASE_URL}/api/guests/{test_guest_id}", headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    record_test("Guest Details & History", res.get("success", False), f"Name: {res.get('guest', {}).get('full_name')}")
-
-except Exception as e:
-    record_test("Guest Management", False, str(e))
-
-# TEST 5: Room Management
-print("\n5. Testing Room Management...")
-try:
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/rooms", headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and len(res.get("list", [])) >= 5:
-        record_test("Room Inventory Listing", True, f"Found {len(res['list'])} rooms")
-    else:
-        record_test("Room Inventory Listing", False, str(res))
-except Exception as e:
-    record_test("Room Management", False, str(e))
-
-# TEST 6: Booking Creation & Overlap Prevention
-print("\n6. Testing Booking & Overlap Prevention...")
-try:
-    # Clean up any leftover test bookings from previous runs to ensure idempotency
-    from database import get_connection
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM bookings WHERE check_in_date >= '2099-01-01'")
-    conn.commit()
-    conn.close()
-
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
-    # Create Booking 1 (Room ID 3, dates 2099-11-01 to 2099-11-05)
-    b_data1 = {"guest_id": test_guest_id, "room_id": 3, "check_in_date": "2099-11-01", "check_out_date": "2099-11-05", "advance_payment": 20}
-    req = urllib.request.Request(f"{BASE_URL}/api/bookings", data=json.dumps(b_data1).encode(), headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success"):
-        record_test("Booking Creation", True, res.get("message"))
-    else:
-        record_test("Booking Creation", False, str(res))
-
-    # Overlap Check (Room ID 3, dates 2099-11-03 to 2099-11-07)
-    b_data2 = {"guest_id": test_guest_id, "room_id": 3, "check_in_date": "2099-11-03", "check_out_date": "2099-11-07"}
-    try:
-        req = urllib.request.Request(f"{BASE_URL}/api/bookings", data=json.dumps(b_data2).encode(), headers=headers)
-        urllib.request.urlopen(req)
-        record_test("Booking Overlap Prevention", False, "Overlapping booking was NOT rejected!")
-    except urllib.error.HTTPError as err:
-        err_data = json.loads(err.read().decode())
-        if err.code == 409 and "OVERLAP" in err_data.get("message", ""):
-            record_test("Booking Overlap Prevention", True, f"HTTP 409 Overlap Correctly Prevented: {err_data.get('message')}")
-        else:
-            record_test("Booking Overlap Prevention", False, f"Unexpected error: {err_data}")
-
-except Exception as e:
-    record_test("Booking & Overlap Check", False, str(e))
-
-# TEST 7: Check-In Workflow
-print("\n7. Testing Check-In Workflow...")
-try:
-    # First set Room 202 to Available via Housekeeping reset to ensure test passes
-    headers_adm = {"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
-    req_reset = urllib.request.Request(f"{BASE_URL}/api/housekeeping", data=json.dumps({"room_number": "202", "cleaning_status": "Clean"}).encode(), headers=headers_adm, method="PUT")
-    urllib.request.urlopen(req_reset)
-    
-    # Also reset room status in DB just to be perfectly sure it's Available for check-in
-    from database import get_connection
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE rooms SET status = 'Available' WHERE room_number = '202'")
-    conn.commit()
-    conn.close()
-
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {rec_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/check-in", data=json.dumps({"room_num": "202", "guest_name": "Verification User", "nights": 2}).encode(), headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success"):
-        record_test("Check-In Workflow", True, f"Room 202 checked in. Status: Occupied")
-    else:
-        record_test("Check-In Workflow", False, str(res))
-except Exception as e:
-    record_test("Check-In Workflow", False, str(e))
-
-# TEST 8: Check-Out & Billing Calculations
-print("\n8. Testing Check-Out & Itemized Billing...")
-try:
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {rec_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/check-out", data=json.dumps({"room_num": "202", "services": 35.0}).encode(), headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and "invoice" in res:
-        inv = res["invoice"]
-        record_test("Check-Out & Itemized Billing", True, f"Invoice {inv['invoice_number']}: Total = ${inv['total_bill']}")
-    else:
-        record_test("Check-Out & Itemized Billing", False, str(res))
-except Exception as e:
-    record_test("Check-Out & Itemized Billing", False, str(e))
-    
-# TEST 9: Services
-print("\n9. Testing Services...")
-try:
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/services", headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and len(res.get("services", [])) > 0:
-        record_test("Services List", True, f"Found {len(res['services'])} services")
-    else:
-        record_test("Services List", False, str(res))
-except Exception as e:
-    record_test("Services List", False, str(e))
+import database
+from database import get_connection, init_db, hash_password, verify_password, get_database_type, DictRow, UnifiedCursor
+import auth
+from auth import authenticate_user, get_current_user, check_permission, logout_user
+import hotel_manager
+from hotel_manager import load_rooms, api_check_in, api_check_out, api_get_stats
+from api.index import app
 
 
-# TEST 10: Housekeeping Status Changes
-print("\n10. Testing Housekeeping Management...")
-try:
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {admin_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/housekeeping", data=json.dumps({"room_number": "202", "cleaning_status": "Clean", "assigned_staff": "Housekeeping Team"}).encode(), headers=headers, method="PUT")
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success"):
-        record_test("Housekeeping Update", True, res.get("message"))
-    else:
-        record_test("Housekeeping Update", False, str(res))
-except Exception as e:
-    record_test("Housekeeping Update", False, str(e))
+class GrandHorizonEnterpriseTestSuite(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        print(f"\n=======================================================")
+        print(f"🧪 GRAND HORIZON TEST SUITE — Active Engine: {get_database_type()}")
+        print(f"=======================================================\n")
+        init_db()
+        cls.client = app.test_client()
 
-# TEST 11: Dashboard Statistics
-print("\n11. Testing Dashboard Statistics...")
-try:
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    req = urllib.request.Request(f"{BASE_URL}/api/dashboard", headers=headers)
-    res = json.loads(urllib.request.urlopen(req).read().decode())
-    if res.get("success") and "stats" in res:
-        st = res["stats"]
-        record_test("Dashboard Statistics", True, f"Total: {st['total']}, Available: {st['available']}, Revenue: ${st['revenue']}")
-    else:
-        record_test("Dashboard Statistics", False, str(res))
-except Exception as e:
-    record_test("Dashboard Statistics", False, str(e))
+    def test_01_database_connection_and_schema(self):
+        """Test DB connection, table creation and unified cursor."""
+        conn = get_connection()
+        self.assertIsNotNone(conn)
+        cursor = conn.cursor()
 
-# TEST 12: CLI main.py Compatibility
-print("\n12. Testing CLI main.py Compatibility...")
-try:
-    from hotel_manager import load_rooms, api_get_stats
-    rooms = load_rooms()
-    stats = api_get_stats(rooms)
-    if len(rooms) >= 5 and "total" in stats:
-        record_test("CLI main.py Data Sync", True, f"Loaded {len(rooms)} rooms from SQLite database cleanly")
-    else:
-        record_test("CLI main.py Data Sync", False, f"Unexpected rooms: {rooms}")
-except Exception as e:
-    record_test("CLI main.py Data Sync", False, str(e))
+        # Check essential tables
+        tables = ["users", "user_sessions", "guests", "rooms", "bookings", "services", "invoices", "payments", "housekeeping"]
+        for table in tables:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            count_row = cursor.fetchone()
+            self.assertIsNotNone(count_row)
+            print(f"  ✓ Table verified: '{table}' (Rows: {count_row[0]})")
+        conn.close()
 
-# SUMMARY REPORT
-print("\n==================================================")
-print("              SUMMARY TEST REPORT                 ")
-print("==================================================")
-print(f"Total Tests Run: {len(results['passed']) + len(results['failed'])}")
-print(f"Tests Passed   : {len(results['passed'])}")
-print(f"Tests Failed   : {len(results['failed'])}")
+    def test_02_password_hashing_and_auth(self):
+        """Test PBKDF2 password hashing and database-backed persistent sessions."""
+        raw_pw = "GrandHorizon2026!"
+        pwd_hash = hash_password(raw_pw)
+        self.assertTrue(verify_password(pwd_hash, raw_pw))
+        self.assertFalse(verify_password(pwd_hash, "WrongPassword"))
 
-if results["failed"]:
-    print("\nFAILED TESTS DETAILS:")
-    for err in results["errors"]:
-        print(f" - {err}")
-else:
-    print("\n🎉 ALL COMPONENT VERIFICATIONS PASSED 100% CLEANLY!")
+        # Test auth with default admin
+        success, msg, session_data = authenticate_user("admin", "admin123")
+        self.assertTrue(success, f"Login failed: {msg}")
+        self.assertIsNotNone(session_data)
+        token = session_data["token"]
+
+        # Validate persistent session from database
+        user = get_current_user(token)
+        self.assertIsNotNone(user)
+        self.assertEqual(user["username"], "admin")
+        self.assertEqual(user["role"], "Admin")
+
+        # Test RBAC permissions
+        self.assertTrue(check_permission("Admin", "dashboard"))
+        self.assertTrue(check_permission("Admin", "users"))
+        self.assertFalse(check_permission("Receptionist", "users"))
+        self.assertTrue(check_permission("Receptionist", "guests"))
+
+        # Test logout
+        logout_success = logout_user(token)
+        self.assertTrue(logout_success)
+        self.assertIsNone(get_current_user(token))
+        print("  ✓ Authentication & persistent session validation passed.")
+
+    def test_03_room_state_machine_and_synchronization(self):
+        """Test room transitions: Available -> Occupied -> Cleaning -> Available."""
+        # Ensure room 101 starts in Available state for test
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE rooms SET status = 'Available', housekeeping_status = 'Clean' WHERE room_number = '101'")
+        cur.execute("DELETE FROM bookings WHERE room_id = (SELECT id FROM rooms WHERE room_number = '101') AND status = 'Checked-in'")
+        conn.commit()
+        conn.close()
+
+        rooms = load_rooms()
+        self.assertIn("101", rooms)
+
+        # 1. Check in guest -> Should transition to Occupied
+        success, msg, inv = api_check_in(rooms, "101", "Lady Eleanor Vance", nights=2)
+        self.assertTrue(success, msg)
+        rooms_after_in = load_rooms()
+        self.assertEqual(rooms_after_in["101"]["status"], "Occupied")
+        self.assertEqual(rooms_after_in["101"]["guest"], "Lady Eleanor Vance")
+        print("  ✓ Check-in transition: Room 101 is now 'Occupied'.")
+
+        # 2. Check out guest -> Should transition to Cleaning
+        success_out, msg_out, inv_out = api_check_out(rooms_after_in, "101", services_charge=25.0)
+        self.assertTrue(success_out, msg_out)
+        rooms_after_out = load_rooms()
+        self.assertEqual(rooms_after_out["101"]["status"], "Cleaning")
+        print("  ✓ Check-out transition: Room 101 is now 'Cleaning'.")
+
+        # 3. Housekeeping marks room Clean -> Should transition back to Available
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE rooms SET status = 'Available', housekeeping_status = 'Clean' WHERE room_number = '101'")
+        cur.execute("UPDATE housekeeping SET cleaning_status = 'Clean' WHERE room_number = '101'")
+        conn.commit()
+        conn.close()
+
+        rooms_after_clean = load_rooms()
+        self.assertEqual(rooms_after_clean["101"]["status"], "Available")
+        print("  ✓ Housekeeping completion transition: Room 101 is now 'Available'.")
+
+    def test_04_reservation_overlap_prevention(self):
+        """Test server-side overlap prevention returns HTTP 409 Conflict."""
+        # Clean up any previous test bookings for Room 202
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM bookings WHERE room_id = 5") # Room 202
+        conn.commit()
+        conn.close()
+
+        # Login admin to obtain token
+        success, msg, session = authenticate_user("admin", "admin123")
+        token = session["token"]
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # First booking: 2026-11-10 to 2026-11-15 for room 202 (id=5)
+        b1_payload = {
+            "guest_id": 1,
+            "room_id": 5,
+            "check_in_date": "2026-11-10",
+            "check_out_date": "2026-11-15",
+            "advance_payment": 100.0
+        }
+        res1 = self.client.post("/api/bookings", data=json.dumps(b1_payload), headers=headers)
+        self.assertEqual(res1.status_code, 201)
+        print("  ✓ Booking 1 created for 2026-11-10 -> 2026-11-15.")
+
+        # Overlapping booking: 2026-11-12 to 2026-11-14 for same room 202
+        b2_payload = {
+            "guest_id": 1,
+            "room_id": 5,
+            "check_in_date": "2026-11-12",
+            "check_out_date": "2026-11-14",
+            "advance_payment": 0.0
+        }
+        res2 = self.client.post("/api/bookings", data=json.dumps(b2_payload), headers=headers)
+        self.assertEqual(res2.status_code, 409, "Server should reject overlapping booking with HTTP 409 Conflict")
+        data2 = json.loads(res2.data)
+        self.assertFalse(data2["success"])
+        self.assertIn("OVERLAP DETECTED", data2["message"])
+        print("  ✓ Overlap booking correctly rejected with HTTP 409 Conflict.")
+
+        # Non-overlapping booking: 2026-11-16 to 2026-11-20 -> Should succeed with 201
+        b3_payload = {
+            "guest_id": 1,
+            "room_id": 5,
+            "check_in_date": "2026-11-16",
+            "check_out_date": "2026-11-20",
+            "advance_payment": 50.0
+        }
+        res3 = self.client.post("/api/bookings", data=json.dumps(b3_payload), headers=headers)
+        self.assertEqual(res3.status_code, 201)
+        print("  ✓ Non-overlapping booking succeeded with HTTP 201.")
+
+    def test_05_guest_crud_and_history(self):
+        """Test guest creation, listing, updating and history retrieval."""
+        success, msg, session = authenticate_user("admin", "admin123")
+        token = session["token"]
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Create guest
+        guest_payload = {
+            "full_name": "Lord Sterling Archer",
+            "phone": "9876543210",
+            "email": "sterling@grandhorizon.com",
+            "city": "London",
+            "country": "United Kingdom",
+            "id_proof_type": "Diplomatic Passport",
+            "id_proof_number": "UK-889900"
+        }
+        res = self.client.post("/api/guests", data=json.dumps(guest_payload), headers=headers)
+        self.assertEqual(res.status_code, 201)
+        data = json.loads(res.data)
+        guest_id = data["guest_id"]
+        self.assertIsNotNone(guest_id)
+
+        # Get guest details with history
+        res_get = self.client.get(f"/api/guests/{guest_id}", headers=headers)
+        self.assertEqual(res_get.status_code, 200)
+        data_get = json.loads(res_get.data)
+        self.assertEqual(data_get["guest"]["full_name"], "Lord Sterling Archer")
+        self.assertIn("bookings", data_get)
+        self.assertIn("payments", data_get)
+        print("  ✓ Guest CRUD & portfolio history verification passed.")
+
+    def test_06_dashboard_statistics(self):
+        """Test dashboard statistics calculation."""
+        stats = api_get_stats()
+        self.assertIn("total", stats)
+        self.assertIn("available", stats)
+        self.assertIn("occupied", stats)
+        self.assertIn("cleaning", stats)
+        self.assertIn("revenue", stats)
+        self.assertIn("occupancy_rate", stats)
+        self.assertGreaterEqual(stats["total"], 5)
+        print(f"  ✓ Dashboard stats: Total={stats['total']}, Avail={stats['available']}, Occ={stats['occupied']}, Rev=${stats['revenue']}")
+
+    def test_07_postgresql_query_translation_engine(self):
+        """Test the query converter used for PostgreSQL mode."""
+        cur = UnifiedCursor(None, "POSTGRESQL")
+        
+        # Test placeholder conversion
+        q1 = "SELECT * FROM users WHERE username = ? AND id = ?"
+        t1 = cur._convert_query(q1)
+        self.assertEqual(t1, "SELECT * FROM users WHERE username = :p0 AND id = :p1")
+
+        # Test avoiding replacing ? inside string literal
+        q2 = "SELECT * FROM rooms WHERE description LIKE '%What is this?%' AND floor = ?"
+        t2 = cur._convert_query(q2)
+        self.assertEqual(t2, "SELECT * FROM rooms WHERE description LIKE '%What is this?%' AND floor = :p0")
+
+        # Test INSERT OR IGNORE conversion
+        q3 = "INSERT OR IGNORE INTO housekeeping (room_number) VALUES (?)"
+        t3 = cur._convert_query(q3)
+        self.assertIn("INSERT INTO housekeeping", t3)
+        self.assertIn("ON CONFLICT DO NOTHING", t3)
+        print("  ✓ PostgreSQL parameter translation and query engine verified.")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -4,16 +4,17 @@
   =====================================================================
   Crafted for ultra-premium digital hospitality management.
   Features:
-  - Auth, Session Tokens & Role-Based Access Control (RBAC)
-  - Live Clock, Dynamic Greetings & Omnibox Instant Search (⌘K)
+  - Persistent Session Validation & Role-Based Access Control (RBAC)
+  - Live Auto-Polling (15s) & Manual Instant Sync for Real-Time Multi-Client Consistency
+  - Standardized Error Handling, Loading Skeletons, and Empty States
   - Dashboard: 7 Bespoke KPIs, Interactive Room Visualization, Active Stays
   - Guided 4-Step Check-In Wizard & Guided Check-Out Billing Workflow
   - Guest Portfolio Drawer with 4-tab history (Profile, Stays, Payments, Notes)
   - Room Dossier Drawer with instant status updates & amenities
-  - Overlap-Checked Reservations & Dual View (List + Timeline Calendar)
+  - Overlap-Checked Reservations & Dual View (List + Schedule Timeline)
   - 5-Column Housekeeping Kanban Board (Dirty, Cleaning, Clean, Inspected, Maint)
-  - Reports & Analytics with Dark Gold Canvas Chart Visualizations
-  - Printable Luxury Hotel Folio Invoices (@media print)
+  - Reports & Analytics with Dark Gold Canvas Visualizations
+  - Printable Luxury Hotel Folio Invoices
   - Rich Glassmorphic Modals, Confirm Dialogs & Toast Notifications
 */
 
@@ -29,6 +30,7 @@ let allServices = [];
 let allHousekeeping = [];
 let currentBookingView = "list"; // 'list' or 'calendar'
 let currentDashRoomFilter = "ALL";
+let livePollInterval = null;
 
 // ==========================================================================
 // 2. INITIALIZATION
@@ -42,6 +44,9 @@ document.addEventListener("DOMContentLoaded", () => {
   } else {
     showAuthScreen(true);
   }
+
+  // Start background live polling
+  initAutoSync();
 });
 
 function initClock() {
@@ -69,7 +74,76 @@ function initClock() {
 }
 
 // ==========================================================================
-// 3. AUTHENTICATION & RBAC
+// 3. REAL-TIME DATA SYNCHRONIZATION & AUTO-POLL STRATEGY
+// ==========================================================================
+
+function initAutoSync() {
+  if (livePollInterval) clearInterval(livePollInterval);
+  livePollInterval = setInterval(async () => {
+    // Only poll when authenticated and user is not in the middle of a modal dialog
+    if (!currentToken || !currentUser) return;
+    const activeModals = document.querySelectorAll(".modal-overlay.active, .drawer-overlay.active");
+    if (activeModals.length > 0) return;
+
+    try {
+      const activeSection = document.querySelector(".view-section.active");
+      const viewName = activeSection ? activeSection.id.replace("view-", "") : "dashboard";
+      
+      if (viewName === "dashboard") {
+        await loadDashboard(true);
+      } else if (viewName === "bookings") {
+        await loadBookings(true);
+      } else if (viewName === "guests") {
+        await loadGuests("", true);
+      } else if (viewName === "rooms") {
+        await loadRooms(true);
+      } else if (viewName === "housekeeping") {
+        await loadHousekeeping(true);
+      } else if (viewName === "services") {
+        await loadServices(true);
+      }
+      
+      refreshBadgeCounts();
+    } catch (e) {
+      // Background poll silently catches connection blips
+    }
+  }, 15000); // Poll every 15 seconds
+}
+
+async function triggerManualSync() {
+  const icon = document.getElementById("sync-spin-icon");
+  if (icon) icon.style.transform = "rotate(360deg)";
+
+  try {
+    await loadAllData();
+    showToast("success", "Synchronized", "All hotel data synchronized directly from live database.");
+  } catch (e) {
+    showToast("error", "Sync Error", "Unable to refresh data. Please check connection.");
+  } finally {
+    setTimeout(() => {
+      if (icon) icon.style.transform = "rotate(0deg)";
+    }, 600);
+  }
+}
+
+async function refreshBadgeCounts() {
+  try {
+    const res = await fetch("/api/bookings", {
+      headers: { "Authorization": `Bearer ${currentToken}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.bookings) {
+        allBookings = data.bookings;
+        const countBadge = document.getElementById("badge-bookings-count");
+        if (countBadge) countBadge.textContent = allBookings.length;
+      }
+    }
+  } catch (e) {}
+}
+
+// ==========================================================================
+// 4. AUTHENTICATION & RBAC
 // ==========================================================================
 function showAuthScreen(show) {
   const screen = document.getElementById("auth-screen");
@@ -152,7 +226,7 @@ function handleLogout() {
 }
 
 // ==========================================================================
-// 4. VIEW NAVIGATION
+// 5. VIEW NAVIGATION
 // ==========================================================================
 function switchView(viewName) {
   const views = document.querySelectorAll(".view-section");
@@ -205,13 +279,16 @@ function closeSidebar() {
 }
 
 // ==========================================================================
-// 5. DASHBOARD CONTROLLER
+// 6. DASHBOARD CONTROLLER
 // ==========================================================================
-async function loadDashboard() {
+async function loadDashboard(isBackground = false) {
   try {
     const res = await fetch("/api/dashboard", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (data.success && data.stats) {
       const s = data.stats;
@@ -233,16 +310,21 @@ async function loadDashboard() {
     const rRes = await fetch("/api/rooms", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
-    const rData = await rRes.json();
-    if (rData.success && rData.list) {
-      allRooms = rData.list;
-      renderDashRoomsGrid(allRooms);
-      
-      const featCount = document.getElementById("login-feat-rooms");
-      if (featCount) featCount.textContent = `${allRooms.length}+`;
+    if (rRes.ok) {
+      const rData = await rRes.json();
+      if (rData.success && rData.list) {
+        allRooms = rData.list;
+        renderDashRoomsGrid(allRooms);
+        
+        const featCount = document.getElementById("login-feat-rooms");
+        if (featCount) featCount.textContent = `${allRooms.length}+`;
+      }
     }
   } catch (e) {
     console.error("Dashboard error:", e);
+    if (!isBackground) {
+      showToast("error", "Dashboard Notice", "Unable to refresh live statistics. Please try syncing again.");
+    }
   }
 }
 
@@ -256,8 +338,8 @@ function filterDashRooms(status) {
   const pills = document.querySelectorAll("#dash-room-filters .filter-pill-btn");
   pills.forEach(p => p.classList.remove("active"));
   
-  if (event && event.target) {
-    event.target.classList.add("active");
+  if (window.event && window.event.target) {
+    window.event.target.classList.add("active");
   }
 
   const filtered = (status === "ALL")
@@ -361,16 +443,19 @@ function renderActiveStays(stays) {
 }
 
 // ==========================================================================
-// 6. RESERVATIONS CONTROLLER (LIST & CALENDAR)
+// 7. RESERVATIONS CONTROLLER (LIST & TIMELINE)
 // ==========================================================================
-async function loadBookings() {
+async function loadBookings(isBackground = false) {
   const tbody = document.getElementById("table-bookings");
-  if (tbody) renderTableSkeleton(tbody, 7, 4);
+  if (tbody && !isBackground) renderTableSkeleton(tbody, 7, 4);
 
   try {
     const res = await fetch("/api/bookings", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     allBookings = data.bookings || [];
     
@@ -383,6 +468,16 @@ async function loadBookings() {
     }
   } catch (e) {
     console.error("Bookings load error:", e);
+    if (tbody && !isBackground) {
+      tbody.innerHTML = `<tr><td colspan="7">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Reservations",
+          "There was a problem communicating with the database. Please try reloading.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadBookings()">🔄 Retry Loading</button>`
+        )}
+      </td></tr>`;
+    }
   }
 }
 
@@ -410,7 +505,7 @@ function renderBookings(bookings) {
       <td><strong style="font-family:'Cinzel',serif;color:var(--gold-light);font-size:0.85rem;">${b.booking_code}</strong></td>
       <td>
         <div style="font-weight:600;color:var(--text-pure);">${escapeHtml(b.guest_name)}</div>
-        <div style="font-size:0.75rem;color:var(--text-muted);">${b.guest_phone || ""}</div>
+        <div style="font-size:0.75rem;color:var(--text-muted);">${escapeHtml(b.guest_phone || "")}</div>
       </td>
       <td><strong>Room ${b.room_number}</strong> <span style="font-size:0.75rem;color:var(--text-dim);">(${b.room_type})</span></td>
       <td>${formatDate(b.check_in_date)} → ${formatDate(b.check_out_date)}</td>
@@ -497,29 +592,34 @@ function filterBookings() {
 }
 
 // ==========================================================================
-// 7. GUEST DIRECTORY & TABBED PROFILE DRAWER
+// 8. GUEST DIRECTORY & TABBED PROFILE DRAWER
 // ==========================================================================
-async function loadGuests(query = "") {
+async function loadGuests(query = "", isBackground = false) {
   const tbody = document.getElementById("table-guests");
-  if (tbody) renderTableSkeleton(tbody, 6, 4);
+  if (tbody && !isBackground) renderTableSkeleton(tbody, 6, 4);
 
   try {
     const res = await fetch(`/api/guests?q=${encodeURIComponent(query)}`, {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     allGuests = data.guests || [];
-    tbody.innerHTML = "";
+    if (tbody) tbody.innerHTML = "";
 
     if (allGuests.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6">
-        ${renderEmptyState(
-          `<svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3z"/></svg>`,
-          "No Guest Profiles Registered",
-          query ? `No guests match "${escapeHtml(query)}". Try clearing or adjusting search term.` : "Your hotel clientele directory is empty. Register incoming guests to maintain comprehensive profiles.",
-          `<button class="btn btn-primary btn-sm" onclick="openAddGuestModal()">+ Register New Guest</button>`
-        )}
-      </td></tr>`;
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="6">
+          ${renderEmptyState(
+            `<svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3z"/></svg>`,
+            "No Guest Profiles Registered",
+            query ? `No guests match "${escapeHtml(query)}". Try clearing or adjusting search term.` : "Your hotel clientele directory is empty. Register incoming guests to maintain comprehensive profiles.",
+            `<button class="btn btn-primary btn-sm" onclick="openAddGuestModal()">+ Register New Guest</button>`
+          )}
+        </td></tr>`;
+      }
       return;
     }
 
@@ -530,16 +630,16 @@ async function loadGuests(query = "") {
         <td><span style="color:var(--gold-light);font-size:0.78rem;">#G-${g.id}</span></td>
         <td>
           <div style="font-weight:600;color:var(--text-pure);">${escapeHtml(g.full_name)}</div>
-          <div style="font-size:0.72rem;color:var(--text-muted);">${g.nationality || "International"}</div>
+          <div style="font-size:0.72rem;color:var(--text-muted);">${escapeHtml(g.nationality || "International")}</div>
         </td>
         <td>
-          <div style="font-size:0.85rem;">${g.phone}</div>
-          <div style="font-size:0.75rem;color:var(--text-muted);">${g.email || "—"}</div>
+          <div style="font-size:0.85rem;">${escapeHtml(g.phone)}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);">${escapeHtml(g.email || "—")}</div>
         </td>
-        <td>${g.city ? `${g.city}, ` : ""}${g.country || "—"}</td>
+        <td>${g.city ? `${escapeHtml(g.city)}, ` : ""}${escapeHtml(g.country || "—")}</td>
         <td>
           <span style="font-size:0.78rem;background:var(--charcoal-3);padding:3px 8px;border-radius:4px;border:1px solid var(--border-subtle);color:var(--text-muted);">
-            ${g.id_proof_type || "ID"}: ${g.id_proof_number || "Verified"}
+            ${escapeHtml(g.id_proof_type || "ID")}: ${escapeHtml(g.id_proof_number || "Verified")}
           </span>
         </td>
         <td>
@@ -554,10 +654,20 @@ async function loadGuests(query = "") {
         </td>
       `;
       tr.onclick = () => openGuestDrawer(g.id);
-      tbody.appendChild(tr);
+      if (tbody) tbody.appendChild(tr);
     });
   } catch (e) {
     console.error("Guests load error:", e);
+    if (tbody && !isBackground) {
+      tbody.innerHTML = `<tr><td colspan="6">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Guests",
+          "There was a problem retrieving guest records from the server.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadGuests()">🔄 Retry Loading</button>`
+        )}
+      </td></tr>`;
+    }
   }
 }
 
@@ -591,18 +701,18 @@ async function openGuestDrawer(guestId) {
           </div>
           <div>
             <h3 style="font-family:'Cinzel',serif;color:var(--text-pure);">${escapeHtml(g.full_name)}</h3>
-            <p style="color:var(--gold-light);font-size:0.8rem;">ID: #G-${g.id} · ${g.nationality || "Citizen"}</p>
+            <p style="color:var(--gold-light);font-size:0.8rem;">ID: #G-${g.id} · ${escapeHtml(g.nationality || "Citizen")}</p>
           </div>
         </div>
 
         <div style="background:var(--charcoal-1);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;">
           <div class="inv-section-title">Contact &amp; Identification</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.85rem;">
-            <div><span style="color:var(--text-muted);">Phone:</span> <strong>${g.phone}</strong></div>
-            <div><span style="color:var(--text-muted);">Email:</span> <strong>${g.email || "—"}</strong></div>
-            <div><span style="color:var(--text-muted);">ID Type:</span> <strong>${g.id_proof_type || "Passport"}</strong></div>
-            <div><span style="color:var(--text-muted);">ID Number:</span> <strong>${g.id_proof_number || "—"}</strong></div>
-            <div><span style="color:var(--text-muted);">Location:</span> <strong>${g.city || ""}, ${g.country || "—"}</strong></div>
+            <div><span style="color:var(--text-muted);">Phone:</span> <strong>${escapeHtml(g.phone)}</strong></div>
+            <div><span style="color:var(--text-muted);">Email:</span> <strong>${escapeHtml(g.email || "—")}</strong></div>
+            <div><span style="color:var(--text-muted);">ID Type:</span> <strong>${escapeHtml(g.id_proof_type || "Passport")}</strong></div>
+            <div><span style="color:var(--text-muted);">ID Number:</span> <strong>${escapeHtml(g.id_proof_number || "—")}</strong></div>
+            <div><span style="color:var(--text-muted);">Location:</span> <strong>${escapeHtml(g.city || "")}, ${escapeHtml(g.country || "—")}</strong></div>
             <div><span style="color:var(--text-muted);">Member Since:</span> <strong>${formatDate(g.created_at)}</strong></div>
           </div>
         </div>
@@ -610,8 +720,8 @@ async function openGuestDrawer(guestId) {
         <div style="background:var(--charcoal-1);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:20px;">
           <div class="inv-section-title">Emergency Contact</div>
           <div style="font-size:0.85rem;">
-            <div>Name: <strong>${g.emergency_name || "Not specified"}</strong></div>
-            <div>Phone: <strong>${g.emergency_phone || "Not specified"}</strong></div>
+            <div>Name: <strong>${escapeHtml(g.emergency_name || "Not specified")}</strong></div>
+            <div>Phone: <strong>${escapeHtml(g.emergency_phone || "Not specified")}</strong></div>
           </div>
         </div>
       </div>
@@ -658,7 +768,7 @@ async function openGuestDrawer(guestId) {
         <div class="inv-section-title" style="margin-bottom:12px;">Guest Preferences &amp; Requests</div>
         <div style="background:var(--charcoal-1);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:18px;">
           <p style="color:var(--text-main);font-size:0.88rem;line-height:1.6;">
-            ${g.special_requests || g.notes || "No special dietary or accommodation preferences logged for this guest profile."}
+            ${escapeHtml(g.special_requests || g.notes || "No special dietary or accommodation preferences logged for this guest profile.")}
           </p>
         </div>
       </div>
@@ -673,8 +783,8 @@ async function openGuestDrawer(guestId) {
 function switchDrawerTab(tab) {
   const btns = document.querySelectorAll(".drawer-tab-btn");
   btns.forEach(b => b.classList.remove("active"));
-  if (event && event.target) {
-    event.target.classList.add("active");
+  if (window.event && window.event.target) {
+    window.event.target.classList.add("active");
   }
 
   const tabs = document.querySelectorAll(".drawer-tab-content");
@@ -695,12 +805,12 @@ function confirmDeleteGuest(id, name) {
           headers: { "Authorization": `Bearer ${currentToken}` }
         });
         const data = await res.json();
-        if (data.success) {
+        if (res.ok && data.success) {
           showToast("success", "Deleted", data.message);
           loadGuests();
           loadDashboard();
         } else {
-          showToast("error", "Failed", data.message);
+          showToast("error", "Failed", data.message || "Failed to delete guest.");
         }
       } catch (e) {
         showToast("error", "Error", "Failed to delete guest.");
@@ -710,9 +820,9 @@ function confirmDeleteGuest(id, name) {
 }
 
 // ==========================================================================
-// 8. ROOMS & ROOM DOSSIER DRAWER
+// 9. ROOMS & ROOM DOSSIER DRAWER
 // ==========================================================================
-async function loadRooms() {
+async function loadRooms(isBackground = false) {
   const grid = document.getElementById("rooms-directory-grid");
   if (!grid) return;
 
@@ -720,6 +830,9 @@ async function loadRooms() {
     const res = await fetch("/api/rooms", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (data.success && data.list) {
       allRooms = data.list;
@@ -727,6 +840,16 @@ async function loadRooms() {
     }
   } catch (e) {
     console.error("Rooms load error:", e);
+    if (!isBackground) {
+      grid.innerHTML = `<div style="grid-column:1/-1;">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Room Inventory",
+          "Could not retrieve room details from the database.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadRooms()">🔄 Retry</button>`
+        )}
+      </div>`;
+    }
   }
 }
 
@@ -833,7 +956,7 @@ function openRoomDrawer(roomNum) {
       </div>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-subtle);font-size:0.85rem;">
         <div style="color:var(--text-muted);margin-bottom:4px;">Amenities Included:</div>
-        <div style="color:var(--text-pure);">${room.amenities || "High-Speed WiFi, Smart TV, Premium Robes, Balcony"}</div>
+        <div style="color:var(--text-pure);">${escapeHtml(room.amenities || "High-Speed WiFi, Smart TV, Premium Robes, Balcony")}</div>
       </div>
     </div>
 
@@ -884,12 +1007,12 @@ async function updateHKQuick(roomNum, status) {
       })
     });
     const data = await res.json();
-    if (data.success) {
+    if (res.ok && data.success) {
       showToast("success", "Housekeeping Updated", data.message);
       closeDrawer("drawer-room");
       loadAllData();
     } else {
-      showToast("error", "Error", data.message);
+      showToast("error", "Error", data.message || "Failed to update housekeeping status.");
     }
   } catch (e) {
     showToast("error", "Error", "Failed to update room housekeeping.");
@@ -897,7 +1020,7 @@ async function updateHKQuick(roomNum, status) {
 }
 
 // ==========================================================================
-// 9. GUIDED CHECK-IN / CHECK-OUT CONTROLLER
+// 10. GUIDED CHECK-IN / CHECK-OUT CONTROLLER
 // ==========================================================================
 function showCheckFlow(flow) {
   const btnIn  = document.getElementById("btn-flow-checkin");
@@ -1053,6 +1176,9 @@ async function loadCheckinView() {
     const res = await fetch("/api/dashboard", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     const stays = data.active_checkins || [];
     tbody.innerHTML = "";
@@ -1106,14 +1232,14 @@ async function triggerCheckout(roomNum) {
           body: JSON.stringify({ room_num: roomNum, services: 0.0 })
         });
         const data = await res.json();
-        if (data.success) {
+        if (res.ok && data.success) {
           showToast("success", "Check-Out Complete", data.message);
           loadAllData();
           if (data.invoice) {
             renderPrintableInvoice(data.invoice);
           }
         } else {
-          showToast("error", "Check-Out Failed", data.message);
+          showToast("error", "Check-Out Failed", data.message || "Failed to process check-out.");
         }
       } catch (e) {
         showToast("error", "Error", "Check-out request failed.");
@@ -1133,11 +1259,11 @@ async function quickCheckInBooking(roomNum, guestName) {
       body: JSON.stringify({ room_num: roomNum, guest_name: guestName, nights: 1 })
     });
     const data = await res.json();
-    if (data.success) {
+    if (res.ok && data.success) {
       showToast("success", "Guest Checked In", data.message);
       loadAllData();
     } else {
-      showToast("error", "Check-In Failed", data.message);
+      showToast("error", "Check-In Failed", data.message || "Failed to check in guest.");
     }
   } catch (e) {
     showToast("error", "Error", "Check-in request failed.");
@@ -1145,29 +1271,34 @@ async function quickCheckInBooking(roomNum, guestName) {
 }
 
 // ==========================================================================
-// 10. BILLING, SERVICES & PRINTABLE INVOICE
+// 11. BILLING, SERVICES & PRINTABLE INVOICE
 // ==========================================================================
-async function loadServices() {
+async function loadServices(isBackground = false) {
   const tbody = document.getElementById("table-services");
-  if (tbody) renderTableSkeleton(tbody, 4, 4);
+  if (tbody && !isBackground) renderTableSkeleton(tbody, 4, 4);
 
   try {
     const res = await fetch("/api/services", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     allServices = data.services || [];
-    tbody.innerHTML = "";
+    if (tbody) tbody.innerHTML = "";
 
     if (allServices.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="4">
-        ${renderEmptyState(
-          `<svg viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>`,
-          "No Hotel Services Catalogued",
-          "Amenity items, room dining, and concierge charges will be listed here.",
-          `<button class="btn btn-primary btn-sm" onclick="openAddServiceChargeModal()">+ Add Service Charge</button>`
-        )}
-      </td></tr>`;
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="4">
+          ${renderEmptyState(
+            `<svg viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>`,
+            "No Hotel Services Catalogued",
+            "Amenity items, room dining, and concierge charges will be listed here.",
+            `<button class="btn btn-primary btn-sm" onclick="openAddServiceChargeModal()">+ Add Service Charge</button>`
+          )}
+        </td></tr>`;
+      }
       return;
     }
 
@@ -1176,13 +1307,23 @@ async function loadServices() {
       tr.innerHTML = `
         <td><span style="color:var(--gold-light);font-size:0.78rem;">#S-${s.id}</span></td>
         <td><strong style="color:var(--text-pure);">${escapeHtml(s.service_name)}</strong></td>
-        <td><span class="badge-lux badge-Available">${s.category}</span></td>
+        <td><span class="badge-lux badge-Available">${escapeHtml(s.category)}</span></td>
         <td style="color:var(--gold-light);font-weight:700;font-size:0.95rem;">$${s.unit_price.toFixed(2)}</td>
       `;
-      tbody.appendChild(tr);
+      if (tbody) tbody.appendChild(tr);
     });
   } catch (e) {
     console.error("Services error:", e);
+    if (tbody && !isBackground) {
+      tbody.innerHTML = `<tr><td colspan="4">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Services",
+          "Could not retrieve services catalog from server.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadServices()">🔄 Retry</button>`
+        )}
+      </td></tr>`;
+    }
   }
 }
 
@@ -1265,16 +1406,19 @@ function renderPrintableInvoice(inv) {
 }
 
 // ==========================================================================
-// 11. HOUSEKEEPING KANBAN BOARD
+// 12. HOUSEKEEPING KANBAN BOARD
 // ==========================================================================
-async function loadHousekeeping() {
+async function loadHousekeeping(isBackground = false) {
   const tbody = document.getElementById("table-housekeeping");
-  if (tbody) renderTableSkeleton(tbody, 7, 4);
+  if (tbody && !isBackground) renderTableSkeleton(tbody, 7, 4);
 
   try {
     const res = await fetch("/api/housekeeping", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (data.success && data.housekeeping) {
       allHousekeeping = data.housekeeping;
@@ -1283,6 +1427,16 @@ async function loadHousekeeping() {
     }
   } catch (e) {
     console.error("Housekeeping error:", e);
+    if (tbody && !isBackground) {
+      tbody.innerHTML = `<tr><td colspan="7">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Housekeeping",
+          "Could not retrieve housekeeping status from server.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadHousekeeping()">🔄 Retry</button>`
+        )}
+      </td></tr>`;
+    }
   }
 }
 
@@ -1373,13 +1527,14 @@ function renderHKTable(rooms) {
 }
 
 // ==========================================================================
-// 12. REPORTS & ANALYTICS CANVAS VISUALIZATIONS
+// 13. REPORTS & ANALYTICS CANVAS VISUALIZATIONS
 // ==========================================================================
 async function loadReports() {
   try {
     const res = await fetch("/api/dashboard", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.success && data.stats) {
       const s = data.stats;
@@ -1536,7 +1691,7 @@ function downloadCSV(type) {
 }
 
 // ==========================================================================
-// 13. STAFF & USERS CONTROLLER
+// 14. STAFF & USERS CONTROLLER
 // ==========================================================================
 async function loadUsers() {
   const tbody = document.getElementById("table-users");
@@ -1546,6 +1701,7 @@ async function loadUsers() {
     const res = await fetch("/api/auth/users", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     tbody.innerHTML = "";
 
@@ -1567,7 +1723,7 @@ async function loadUsers() {
         <td><span style="color:var(--gold-light);font-size:0.78rem;">#U-${u.id}</span></td>
         <td><strong style="color:var(--text-pure);">${escapeHtml(u.username)}</strong></td>
         <td>${escapeHtml(u.full_name)}</td>
-        <td><span class="badge-lux badge-Available">${u.role}</span></td>
+        <td><span class="badge-lux badge-Available">${escapeHtml(u.role)}</span></td>
         <td style="font-size:0.8rem;color:var(--text-muted);">${formatDate(u.created_at)}</td>
       `;
       tbody.appendChild(tr);
@@ -1578,7 +1734,7 @@ async function loadUsers() {
 }
 
 // ==========================================================================
-// 14. MODAL & DRAWER CONTROLS
+// 15. MODAL & DRAWER CONTROLS
 // ==========================================================================
 function openModal(id) {
   const el = document.getElementById(id);
@@ -1621,16 +1777,18 @@ async function openNewBookingModal() {
     const gRes = await fetch("/api/guests", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
-    const gData = await gRes.json();
-    const gSel = document.getElementById("b-guest");
-    if (gSel) {
-      gSel.innerHTML = `<option value="">— Select Guest Profile —</option>`;
-      (gData.guests || []).forEach(g => {
-        const opt = document.createElement("option");
-        opt.value = g.id;
-        opt.textContent = `${g.full_name} (${g.phone})`;
-        gSel.appendChild(opt);
-      });
+    if (gRes.ok) {
+      const gData = await gRes.json();
+      const gSel = document.getElementById("b-guest");
+      if (gSel) {
+        gSel.innerHTML = `<option value="">— Select Guest Profile —</option>`;
+        (gData.guests || []).forEach(g => {
+          const opt = document.createElement("option");
+          opt.value = g.id;
+          opt.textContent = `${g.full_name} (${g.phone})`;
+          gSel.appendChild(opt);
+        });
+      }
     }
   } catch (e) {}
 
@@ -1639,16 +1797,18 @@ async function openNewBookingModal() {
     const rRes = await fetch("/api/rooms", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
-    const rData = await rRes.json();
-    const rSel = document.getElementById("b-room");
-    if (rSel) {
-      rSel.innerHTML = `<option value="">— Select Luxury Room —</option>`;
-      (rData.list || []).filter(r => r.status === "Available").forEach(r => {
-        const opt = document.createElement("option");
-        opt.value = r.id;
-        opt.textContent = `Room ${r.room_number} — ${r.room_type} ($${r.price_per_night}/night)`;
-        rSel.appendChild(opt);
-      });
+    if (rRes.ok) {
+      const rData = await rRes.json();
+      const rSel = document.getElementById("b-room");
+      if (rSel) {
+        rSel.innerHTML = `<option value="">— Select Luxury Room —</option>`;
+        (rData.list || []).filter(r => r.status === "Available").forEach(r => {
+          const opt = document.createElement("option");
+          opt.value = r.id;
+          opt.textContent = `Room ${r.room_number} — ${r.room_type} ($${r.price_per_night}/night)`;
+          rSel.appendChild(opt);
+        });
+      }
     }
   } catch (e) {}
 
@@ -1681,16 +1841,18 @@ async function openAddServiceChargeModal() {
     const res = await fetch("/api/bookings", {
       headers: { "Authorization": `Bearer ${currentToken}` }
     });
-    const data = await res.json();
-    const sel = document.getElementById("s-booking");
-    if (sel) {
-      sel.innerHTML = `<option value="">— Select Active Booking —</option>`;
-      (data.bookings || []).filter(b => b.status === "Checked-in").forEach(b => {
-        const opt = document.createElement("option");
-        opt.value = b.id;
-        opt.textContent = `${b.booking_code} — ${b.guest_name} (Room ${b.room_number})`;
-        sel.appendChild(opt);
-      });
+    if (res.ok) {
+      const data = await res.json();
+      const sel = document.getElementById("s-booking");
+      if (sel) {
+        sel.innerHTML = `<option value="">— Select Active Booking —</option>`;
+        (data.bookings || []).filter(b => b.status === "Checked-in").forEach(b => {
+          const opt = document.createElement("option");
+          opt.value = b.id;
+          opt.textContent = `${b.booking_code} — ${b.guest_name} (Room ${b.room_number})`;
+          sel.appendChild(opt);
+        });
+      }
     }
   } catch (e) {}
 
@@ -1707,7 +1869,7 @@ function toggleNotifications() {
 }
 
 // ==========================================================================
-// 15. CONFIRMATION DIALOG
+// 16. CONFIRMATION DIALOG
 // ==========================================================================
 let _confirmCallback = null;
 
@@ -1736,7 +1898,7 @@ function cancelConfirm() {
 }
 
 // ==========================================================================
-// 16. TOAST NOTIFICATIONS
+// 17. TOAST NOTIFICATIONS
 // ==========================================================================
 const TOAST_ICONS = {
   success: `<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`,
@@ -1773,7 +1935,7 @@ function dismissToast(toast) {
 }
 
 // ==========================================================================
-// 17. EVENT LISTENERS & FORM SUBMISSIONS
+// 18. EVENT LISTENERS & FORM SUBMISSIONS
 // ==========================================================================
 function setupEventListeners() {
 
@@ -1794,19 +1956,20 @@ function setupEventListeners() {
       });
       const data = await res.json();
 
-      if (data.success && data.user) {
+      if (res.ok && data.success && data.user) {
         currentToken = data.user.token;
         localStorage.setItem("hms_auth_token", currentToken);
         currentUser = data.user;
         showAuthScreen(false);
         applyRBAC();
         loadAllData();
+        initAutoSync();
         showToast("success", "Welcome to Grand Horizon", `Authenticated as ${data.user.full_name}`);
       } else {
-        showToast("error", "Access Denied", data.message || "Invalid credentials.");
+        showToast("error", "Access Denied", data.message || data.error || "Invalid credentials.");
       }
     } catch (err) {
-      showToast("error", "Connection Error", "Unable to connect to hotel backend.");
+      showToast("error", "Connection Error", "Unable to connect to hotel backend. Check network.");
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -1834,13 +1997,13 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Guest Profile Saved", data.message);
         closeModal("modal-guest");
         loadGuests();
         loadDashboard();
       } else {
-        showToast("error", "Registration Failed", data.message);
+        showToast("error", "Registration Failed", data.message || data.error || "Failed to create guest.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to save guest profile.");
@@ -1865,13 +2028,14 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Reservation Confirmed", data.message);
         closeModal("modal-booking");
         loadBookings();
+        loadRooms();
         loadDashboard();
       } else {
-        showToast("error", "Booking Conflict", data.message || "Overlap detected.");
+        showToast("error", "Booking Conflict", data.message || data.error || "Overlap detected.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to confirm reservation.");
@@ -1892,13 +2056,13 @@ function setupEventListeners() {
         body: JSON.stringify({ room_num: roomNum, guest_name: gName, nights: nights })
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Check-In Confirmed", data.message);
         document.getElementById("wizard-checkin-form")?.reset();
         nextCheckInStep(1);
         loadAllData();
       } else {
-        showToast("error", "Check-In Error", data.message);
+        showToast("error", "Check-In Error", data.message || data.error || "Failed to check in.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to process check-in.");
@@ -1918,7 +2082,7 @@ function setupEventListeners() {
         body: JSON.stringify({ room_num: roomNum, services: services })
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Check-Out Processed", data.message);
         document.getElementById("wizard-checkout-form")?.reset();
         loadAllData();
@@ -1926,7 +2090,7 @@ function setupEventListeners() {
           renderPrintableInvoice(data.invoice);
         }
       } else {
-        showToast("error", "Check-Out Error", data.message);
+        showToast("error", "Check-Out Error", data.message || data.error || "Failed to process check-out.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to process check-out.");
@@ -1953,13 +2117,13 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Room Added", data.message);
         closeModal("modal-room");
         loadRooms();
         loadDashboard();
       } else {
-        showToast("error", "Error", data.message);
+        showToast("error", "Error", data.message || data.error || "Failed to add room.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to add room.");
@@ -1983,11 +2147,12 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Charge Added", data.message);
         closeModal("modal-service");
+        loadServices();
       } else {
-        showToast("error", "Error", data.message);
+        showToast("error", "Error", data.message || data.error || "Failed to add charge.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to add service charge.");
@@ -2010,13 +2175,14 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Status Updated", data.message);
         closeModal("modal-hk");
         loadHousekeeping();
+        loadRooms();
         loadDashboard();
       } else {
-        showToast("error", "Error", data.message);
+        showToast("error", "Error", data.message || data.error || "Failed to update housekeeping.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to update housekeeping.");
@@ -2040,12 +2206,12 @@ function setupEventListeners() {
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showToast("success", "Staff Account Created", data.message);
         closeModal("modal-user");
         loadUsers();
       } else {
-        showToast("error", "Error", data.message);
+        showToast("error", "Error", data.message || data.error || "Failed to create user.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to create staff account.");
@@ -2082,7 +2248,7 @@ function setupEventListeners() {
 }
 
 // ==========================================================================
-// 18. UTILITY HELPERS
+// 19. UTILITY HELPERS
 // ==========================================================================
 function renderEmptyState(iconSvg, title, message, actionBtnHtml = "") {
   return `

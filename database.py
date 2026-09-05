@@ -1,47 +1,264 @@
 """
 database.py
 -----------
-SQLite Relational Database Manager for Grand Horizon Hotel System.
-Handles schema initialization, data migrations, seeding default records,
-and thread-safe database connections (with /tmp fallback for Vercel serverless).
+Enterprise Dual-Engine Database Manager for Grand Horizon Hotel System.
+Supports seamless switching between:
+- SQLite (Local development & fallback)
+- PostgreSQL (Production on Vercel, Supabase, Neon, AWS RDS, etc.)
+
+Features:
+- Automatic detection via DATABASE_URL / POSTGRES_URL environment variables
+- SQLAlchemy connection pooling
+- Parameter translation ('?' -> ':pX') and dict-like row access for both engines
+- DB-backed user_sessions table for stateless multi-instance session synchronization
+- Non-destructive idempotent migrations (CREATE TABLE IF NOT EXISTS)
+- Safe starter seeding (only if database is empty)
 """
 
-import sqlite3
 import os
+import re
 import hashlib
 import binascii
 from datetime import datetime
+from sqlalchemy import create_engine, text
 
-PRIMARY_DB = "hotel.db"
-TMP_DB = "/tmp/hotel.db"
+PRIMARY_SQLITE_DB = "hotel.db"
+TMP_SQLITE_DB = "/tmp/hotel.db"
 
+def get_database_type():
+    """Detects whether PostgreSQL (Production) or SQLite (Local) should be used."""
+    db_url = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRESQL_URL")
+    if db_url and (db_url.startswith("postgres://") or db_url.startswith("postgresql://")):
+        return "POSTGRESQL"
+    return "SQLITE"
 
-def get_db_path():
+def get_sqlite_path():
     """Determines writable SQLite database path."""
-    if os.path.exists(PRIMARY_DB):
-        return PRIMARY_DB
-    if os.path.exists(TMP_DB):
-        return TMP_DB
+    if os.path.exists(PRIMARY_SQLITE_DB):
+        return PRIMARY_SQLITE_DB
+    if os.path.exists(TMP_SQLITE_DB):
+        return TMP_SQLITE_DB
     # Test if current directory is writable
     try:
-        with open("test_db_write.tmp", "w") as f:
+        test_file = "test_db_write.tmp"
+        with open(test_file, "w") as f:
             f.write("test")
-        os.remove("test_db_write.tmp")
-        return PRIMARY_DB
+        os.remove(test_file)
+        return PRIMARY_SQLITE_DB
     except Exception:
-        return TMP_DB
+        return TMP_SQLITE_DB
+
+# ==========================================================================
+# SQLALCHEMY ENGINE SETUP
+# ==========================================================================
+
+_engine = None
+
+def get_engine():
+    global _engine
+    if _engine is not None:
+        return _engine
+
+    db_type = get_database_type()
+    if db_type == "POSTGRESQL":
+        raw_url = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRESQL_URL")
+        if raw_url.startswith("postgres://"):
+            raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+        
+        _engine = create_engine(
+            raw_url,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=30,
+            pool_recycle=1800,
+            connect_args={'sslmode': 'require'} if 'localhost' not in raw_url and '127.0.0.1' not in raw_url and 'sslmode' not in raw_url else {}
+        )
+    else:
+        db_path = get_sqlite_path()
+        _engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False}
+        )
+    return _engine
+
+# ==========================================================================
+# UNIFIED ROW WRAPPER
+# ==========================================================================
+class DictRow(dict):
+    """Row object allowing key-based ('row[\"name\"]'), .get('name'), and index-based ('row[0]') access."""
+    def __init__(self, cols, values):
+        super().__init__(zip(cols, values))
+        self._values = list(values)
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            return self._values[item]
+        return super().__getitem__(item)
+
+    def get(self, k, default=None):
+        return super().get(k, default)
 
 
+# ==========================================================================
+# UNIFIED CURSOR & CONNECTION WRAPPERS
+# ==========================================================================
+class UnifiedCursor:
+    """Cursor wrapper that transparently normalizes queries and result sets between SQLite & PostgreSQL."""
+    def __init__(self, connection, db_type):
+        self._conn = connection
+        self._db_type = db_type
+        self.lastrowid = None
+        self.rowcount = -1
+        self._results = None
+
+    def _convert_query(self, query):
+        """Converts SQLite-style '?' placeholders and SQLite specifics to SQLAlchemy syntax."""
+        if "INSERT OR IGNORE INTO" in query.upper() and self._db_type == "POSTGRESQL":
+            query = re.sub(r"INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", query, flags=re.IGNORECASE)
+            if "ON CONFLICT" not in query.upper():
+                query = query.rstrip("; ") + " ON CONFLICT DO NOTHING"
+
+        # Convert '?' to ':p0', ':p1', etc.
+        parts = re.split(r"('(?:''|[^'])*')", query)
+        new_parts = []
+        param_idx = 0
+        for i, part in enumerate(parts):
+            if i % 2 == 0:
+                while "?" in part:
+                    part = part.replace("?", f":p{param_idx}", 1)
+                    param_idx += 1
+            new_parts.append(part)
+        
+        return "".join(new_parts)
+
+    def execute(self, query, params=None):
+        translated = self._convert_query(query)
+        params_dict = {}
+        if params:
+            if isinstance(params, dict):
+                params_dict = params
+            else:
+                params_dict = {f"p{i}": p for i, p in enumerate(params)}
+        
+        if self._db_type == "POSTGRESQL":
+            is_insert = translated.strip().upper().startswith("INSERT")
+            has_returning = "RETURNING" in translated.upper()
+            
+            if is_insert and not has_returning and "ON CONFLICT DO NOTHING" not in translated.upper():
+                try_query = translated.rstrip("; ") + " RETURNING id"
+                try:
+                    self._results = self._conn.execute(text(try_query), params_dict)
+                    row = self._results.fetchone()
+                    if row:
+                        self.lastrowid = getattr(row, "id", None) or row[0]
+                    self.rowcount = self._results.rowcount
+                    return self
+                except Exception:
+                    pass
+        
+        self._results = self._conn.execute(text(translated), params_dict)
+        self.lastrowid = self._results.lastrowid if hasattr(self._results, "lastrowid") else None
+        self.rowcount = self._results.rowcount
+        return self
+
+    def executemany(self, query, seq_of_params):
+        translated = self._convert_query(query)
+        
+        list_of_dicts = []
+        for params in seq_of_params:
+            if isinstance(params, dict):
+                list_of_dicts.append(params)
+            else:
+                list_of_dicts.append({f"p{i}": p for i, p in enumerate(params)})
+        
+        self._results = self._conn.execute(text(translated), list_of_dicts)
+        self.rowcount = self._results.rowcount
+        return self
+
+    def fetchone(self):
+        if not self._results:
+            return None
+        row = self._results.fetchone()
+        if row is None:
+            return None
+        cols = list(self._results.keys())
+        return DictRow(cols, row)
+
+    def fetchall(self):
+        if not self._results:
+            return []
+        rows = self._results.fetchall()
+        if not rows:
+            return []
+        cols = list(self._results.keys())
+        return [DictRow(cols, r) for r in rows]
+
+    def close(self):
+        try:
+            if self._results:
+                self._results.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
+class UnifiedConnection:
+    """Connection wrapper that unifies SQLite and PostgreSQL database operations using SQLAlchemy."""
+    def __init__(self, sa_conn, db_type):
+        self._sa_conn = sa_conn
+        self._db_type = db_type
+        self._trans = self._sa_conn.begin()
+
+    def cursor(self):
+        return UnifiedCursor(self._sa_conn, self._db_type)
+
+    def commit(self):
+        self._trans.commit()
+        self._trans = self._sa_conn.begin()
+
+    def rollback(self):
+        self._trans.rollback()
+        self._trans = self._sa_conn.begin()
+
+    def close(self):
+        try:
+            self._trans.rollback()
+        except Exception:
+            pass
+        self._sa_conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+
+
+# ==========================================================================
+# DATABASE CONNECTION FACTORY
+# ==========================================================================
 def get_connection():
-    """Returns a SQLite connection with dict row factory."""
-    db_path = get_db_path()
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Returns a unified connection object supporting SQLite or PostgreSQL."""
+    engine = get_engine()
+    conn = engine.connect()
+    db_type = get_database_type()
+    return UnifiedConnection(conn, db_type)
 
 
+# ==========================================================================
+# SECURE PASSWORD HASHING
+# ==========================================================================
 def hash_password(password, salt=None):
-    """Secure password hashing using PBKDF2 with SHA256."""
+    """Secure password hashing using PBKDF2 with SHA256 (100,000 rounds)."""
     if not salt:
         salt = binascii.hexlify(os.urandom(16)).decode('utf-8')
     pwd_hash = hashlib.pbkdf2_hmac(
@@ -70,27 +287,47 @@ def verify_password(stored_password, provided_password):
         return False
 
 
+# ==========================================================================
+# DATABASE SCHEMA INITIALIZATION & MIGRATIONS
+# ==========================================================================
 def init_db():
-    """Creates database tables and seeds starter data if empty."""
+    """Idempotently initializes database tables and seeds starter data if empty."""
+    db_type = get_database_type()
     conn = get_connection()
     cursor = conn.cursor()
 
+    pk_serial = "SERIAL PRIMARY KEY" if db_type == "POSTGRESQL" else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    real_type = "DOUBLE PRECISION" if db_type == "POSTGRESQL" else "REAL"
+
     # 1. Users Table
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         full_name TEXT NOT NULL,
-        role TEXT NOT NULL, -- Admin, Manager, Receptionist, Housekeeping
+        role TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # 2. Guests Table
-    cursor.execute("""
+    # 2. Persistent User Sessions Table
+    cursor.execute(f"""
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        username TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        expires_at {real_type} NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # 3. Guests Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS guests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         full_name TEXT NOT NULL,
         dob TEXT,
         age INTEGER,
@@ -115,28 +352,28 @@ def init_db():
     )
     """)
 
-    # 3. Rooms Table
-    cursor.execute("""
+    # 4. Rooms Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS rooms (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         room_number TEXT UNIQUE NOT NULL,
         floor INTEGER DEFAULT 1,
-        room_type TEXT NOT NULL, -- Standard, Deluxe, Suite, Executive
+        room_type TEXT NOT NULL,
         bed_type TEXT DEFAULT 'Double',
         capacity INTEGER DEFAULT 2,
-        price_per_night REAL NOT NULL,
+        price_per_night {real_type} NOT NULL,
         ac_type TEXT DEFAULT 'AC',
         amenities TEXT,
         description TEXT,
-        status TEXT DEFAULT 'Available', -- Available, Reserved, Occupied, Cleaning, Maintenance
-        housekeeping_status TEXT DEFAULT 'Clean' -- Clean, Dirty, Cleaning, Inspected, Maintenance
+        status TEXT DEFAULT 'Available',
+        housekeeping_status TEXT DEFAULT 'Clean'
     )
     """)
 
-    # 4. Bookings Table
-    cursor.execute("""
+    # 5. Bookings Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS bookings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         booking_code TEXT UNIQUE,
         guest_id INTEGER NOT NULL,
         room_id INTEGER NOT NULL,
@@ -148,81 +385,77 @@ def init_db():
         adults INTEGER DEFAULT 1,
         children INTEGER DEFAULT 0,
         booking_source TEXT DEFAULT 'Walk-in',
-        status TEXT DEFAULT 'Confirmed', -- Confirmed, Pending, Checked-in, Checked-out, Cancelled, No-show
+        status TEXT DEFAULT 'Confirmed',
         special_requests TEXT,
-        advance_payment REAL DEFAULT 0.0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (guest_id) REFERENCES guests (id),
-        FOREIGN KEY (room_id) REFERENCES rooms (id)
+        advance_payment {real_type} DEFAULT 0.0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # 5. Services Table
-    cursor.execute("""
+    # 6. Services Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS services (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         service_name TEXT NOT NULL,
-        category TEXT NOT NULL, -- Restaurant, Room Service, Laundry, Extra Bed, Transport, Other
-        unit_price REAL NOT NULL
+        category TEXT NOT NULL,
+        unit_price {real_type} NOT NULL
     )
     """)
 
-    # 6. Booking Services Table
-    cursor.execute("""
+    # 7. Booking Services Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS booking_services (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         booking_id INTEGER NOT NULL,
         service_id INTEGER,
         service_name TEXT NOT NULL,
         quantity INTEGER DEFAULT 1,
-        unit_price REAL NOT NULL,
-        total_price REAL NOT NULL,
+        unit_price {real_type} NOT NULL,
+        total_price {real_type} NOT NULL,
         date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        notes TEXT,
-        FOREIGN KEY (booking_id) REFERENCES bookings (id)
+        notes TEXT
     )
     """)
 
-    # 7. Invoices Table
-    cursor.execute("""
+    # 8. Invoices Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         invoice_number TEXT UNIQUE NOT NULL,
         booking_id INTEGER NOT NULL,
         guest_id INTEGER NOT NULL,
         room_id INTEGER NOT NULL,
         issue_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        room_charges REAL DEFAULT 0.0,
-        service_charges REAL DEFAULT 0.0,
-        discount REAL DEFAULT 0.0,
-        tax_rate REAL DEFAULT 12.0,
-        tax_amount REAL DEFAULT 0.0,
-        grand_total REAL DEFAULT 0.0,
-        advance_paid REAL DEFAULT 0.0,
-        amount_paid REAL DEFAULT 0.0,
-        balance_due REAL DEFAULT 0.0,
-        payment_status TEXT DEFAULT 'Pending', -- Paid, Partial, Pending
-        FOREIGN KEY (booking_id) REFERENCES bookings (id)
+        room_charges {real_type} DEFAULT 0.0,
+        service_charges {real_type} DEFAULT 0.0,
+        discount {real_type} DEFAULT 0.0,
+        tax_rate {real_type} DEFAULT 12.0,
+        tax_amount {real_type} DEFAULT 0.0,
+        grand_total {real_type} DEFAULT 0.0,
+        advance_paid {real_type} DEFAULT 0.0,
+        amount_paid {real_type} DEFAULT 0.0,
+        balance_due {real_type} DEFAULT 0.0,
+        payment_status TEXT DEFAULT 'Pending'
     )
     """)
 
-    # 8. Payments Table
-    cursor.execute("""
+    # 9. Payments Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS payments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         invoice_number TEXT NOT NULL,
         booking_id INTEGER NOT NULL,
-        amount REAL NOT NULL,
-        payment_method TEXT NOT NULL, -- Cash, UPI, Card, Bank Transfer
+        amount {real_type} NOT NULL,
+        payment_method TEXT NOT NULL,
         transaction_ref TEXT,
         payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # 9. Housekeeping Table
-    cursor.execute("""
+    # 10. Housekeeping Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS housekeeping (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         room_number TEXT UNIQUE NOT NULL,
         cleaning_status TEXT DEFAULT 'Clean',
         assigned_staff TEXT,
@@ -231,10 +464,10 @@ def init_db():
     )
     """)
 
-    # 10. Audit Logs Table
-    cursor.execute("""
+    # 11. Audit Logs Table
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS audit_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk_serial},
         user_id INTEGER,
         action TEXT NOT NULL,
         details TEXT,
@@ -244,18 +477,21 @@ def init_db():
 
     conn.commit()
 
-    # Seed Default Records if empty
+    # Seed Default Records safely if empty
     seed_default_data(conn)
     conn.close()
 
 
 def seed_default_data(conn):
-    """Seeds initial users, rooms, services, and housekeeping records."""
+    """Seeds initial users, rooms, services, and housekeeping records only if table is empty."""
     cursor = conn.cursor()
 
     # Seed Users
     cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
+    user_count_row = cursor.fetchone()
+    user_count = user_count_row[0] if user_count_row else 0
+
+    if user_count == 0:
         users = [
             ("admin", hash_password("admin123"), "System Admin", "Admin"),
             ("manager", hash_password("manager123"), "Hotel Manager", "Manager"),
@@ -269,7 +505,10 @@ def seed_default_data(conn):
 
     # Seed Rooms
     cursor.execute("SELECT COUNT(*) FROM rooms")
-    if cursor.fetchone()[0] == 0:
+    room_count_row = cursor.fetchone()
+    room_count = room_count_row[0] if room_count_row else 0
+
+    if room_count == 0:
         rooms = [
             ("101", 1, "Standard", "Single", 1, 50.0, "AC", "WiFi, TV", "Cozy standard single room", "Available", "Clean"),
             ("102", 1, "Standard", "Double", 2, 50.0, "AC", "WiFi, TV", "Standard double room", "Available", "Clean"),
@@ -284,13 +523,17 @@ def seed_default_data(conn):
 
     # Seed Housekeeping for rooms
     cursor.execute("SELECT room_number FROM rooms")
-    room_numbers = [row["room_number"] for row in cursor.fetchall()]
-    for rm in room_numbers:
+    room_rows = cursor.fetchall()
+    for row in room_rows:
+        rm = row["room_number"] if isinstance(row, dict) else row[0]
         cursor.execute("INSERT OR IGNORE INTO housekeeping (room_number, cleaning_status, assigned_staff) VALUES (?, 'Clean', 'Housekeeping Staff')", (rm,))
 
     # Seed Hotel Services Catalog
     cursor.execute("SELECT COUNT(*) FROM services")
-    if cursor.fetchone()[0] == 0:
+    srv_count_row = cursor.fetchone()
+    srv_count = srv_count_row[0] if srv_count_row else 0
+
+    if srv_count == 0:
         services = [
             ("Breakfast Buffet", "Restaurant", 15.0),
             ("Dinner Gourmet", "Restaurant", 25.0),
@@ -307,5 +550,8 @@ def seed_default_data(conn):
     conn.commit()
 
 
-# Initialize database on module load
-init_db()
+# Initialize database schema safely on module load
+try:
+    init_db()
+except Exception as e:
+    print(f"⚠️ [DATABASE] init_db notice: {e}")
