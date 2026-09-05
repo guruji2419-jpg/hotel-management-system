@@ -807,8 +807,7 @@ function confirmDeleteGuest(id, name) {
         const data = await res.json();
         if (res.ok && data.success) {
           showToast("success", "Deleted", data.message);
-          loadGuests();
-          loadDashboard();
+          loadAllData();
         } else {
           showToast("error", "Failed", data.message || "Failed to delete guest.");
         }
@@ -2000,8 +1999,7 @@ function setupEventListeners() {
       if (res.ok && data.success) {
         showToast("success", "Guest Profile Saved", data.message);
         closeModal("modal-guest");
-        loadGuests();
-        loadDashboard();
+        loadAllData();
       } else {
         showToast("error", "Registration Failed", data.message || data.error || "Failed to create guest.");
       }
@@ -2031,9 +2029,7 @@ function setupEventListeners() {
       if (res.ok && data.success) {
         showToast("success", "Reservation Confirmed", data.message);
         closeModal("modal-booking");
-        loadBookings();
-        loadRooms();
-        loadDashboard();
+        loadAllData();
       } else {
         showToast("error", "Booking Conflict", data.message || data.error || "Overlap detected.");
       }
@@ -2120,8 +2116,7 @@ function setupEventListeners() {
       if (res.ok && data.success) {
         showToast("success", "Room Added", data.message);
         closeModal("modal-room");
-        loadRooms();
-        loadDashboard();
+        loadAllData();
       } else {
         showToast("error", "Error", data.message || data.error || "Failed to add room.");
       }
@@ -2150,7 +2145,7 @@ function setupEventListeners() {
       if (res.ok && data.success) {
         showToast("success", "Charge Added", data.message);
         closeModal("modal-service");
-        loadServices();
+        loadAllData();
       } else {
         showToast("error", "Error", data.message || data.error || "Failed to add charge.");
       }
@@ -2178,9 +2173,7 @@ function setupEventListeners() {
       if (res.ok && data.success) {
         showToast("success", "Status Updated", data.message);
         closeModal("modal-hk");
-        loadHousekeeping();
-        loadRooms();
-        loadDashboard();
+        loadAllData();
       } else {
         showToast("error", "Error", data.message || data.error || "Failed to update housekeeping.");
       }
@@ -2210,6 +2203,7 @@ function setupEventListeners() {
         showToast("success", "Staff Account Created", data.message);
         closeModal("modal-user");
         loadUsers();
+        loadAllData();
       } else {
         showToast("error", "Error", data.message || data.error || "Failed to create user.");
       }
