@@ -31,6 +31,9 @@ let allHousekeeping = [];
 let currentBookingView = "list"; // 'list' or 'calendar'
 let currentDashRoomFilter = "ALL";
 let livePollInterval = null;
+let editingBookingId = null;
+let editingRoomId = null;
+let editingGuestId = null;
 
 // ==========================================================================
 // 2. INITIALIZATION
@@ -211,11 +214,13 @@ function applyRBAC() {
   });
 }
 
-function handleLogout() {
-  fetch("/api/auth/logout", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${currentToken}` }
-  }).catch(() => {});
+async function handleLogout() {
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${currentToken}` }
+    });
+  } catch (e) {}
 
   localStorage.removeItem("hms_auth_token");
   currentToken = "";
@@ -500,7 +505,6 @@ function renderBookings(bookings) {
 
   bookings.forEach(b => {
     const tr = document.createElement("tr");
-    const canCheckIn = b.status === "Confirmed";
     tr.innerHTML = `
       <td><strong style="font-family:'Cinzel',serif;color:var(--gold-light);font-size:0.85rem;">${b.booking_code}</strong></td>
       <td>
@@ -512,11 +516,10 @@ function renderBookings(bookings) {
       <td style="color:var(--gold-light);font-weight:600;">$${b.advance_payment}</td>
       <td><span class="badge-lux badge-${b.status}">${b.status}</span></td>
       <td>
-        ${canCheckIn ? `
-          <button class="btn btn-primary btn-sm" onclick="quickCheckInBooking('${b.room_number}', '${escapeHtml(b.guest_name)}')">
-            Check-In
-          </button>
-        ` : `<span style="font-size:0.78rem;color:var(--text-dim);">Completed</span>`}
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-secondary btn-sm" onclick="openEditBookingModal(${b.id})">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="cancelBooking(${b.id})">❌</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
@@ -647,7 +650,10 @@ async function loadGuests(query = "", isBackground = false) {
             <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openGuestDrawer(${g.id})">
               Portfolio
             </button>
-            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteGuest(${g.id}, '${escapeHtml(g.full_name)}')">
+            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); openEditGuestModal(${g.id})">
+              Edit
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); confirmDeleteGuest(${g.id})">
               Delete
             </button>
           </div>
@@ -696,13 +702,16 @@ async function openGuestDrawer(guestId) {
       <!-- TAB 1: Profile -->
       <div class="drawer-tab-content active" id="gtab-profile">
         <div style="display:flex;align-items:center;gap:18px;margin-bottom:24px;">
-          <div style="width:64px;height:64px;border-radius:var(--radius-md);background:var(--gold-gradient);color:var(--bg-black);display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;box-shadow:0 4px 20px rgba(201,168,76,0.35);">
-            ${g.full_name.charAt(0).toUpperCase()}
+          <div style="display:flex;align-items:center;gap:18px;">
+            <div style="width:64px;height:64px;border-radius:var(--radius-md);background:var(--gold-gradient);color:var(--bg-black);display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;box-shadow:0 4px 20px rgba(201,168,76,0.35);">
+              ${g.full_name.charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <h3 style="font-family:'Cinzel',serif;color:var(--text-pure);">${escapeHtml(g.full_name)}</h3>
+              <p style="color:var(--gold-light);font-size:0.8rem;">ID: #G-${g.id} · ${escapeHtml(g.nationality || "Citizen")}</p>
+            </div>
           </div>
-          <div>
-            <h3 style="font-family:'Cinzel',serif;color:var(--text-pure);">${escapeHtml(g.full_name)}</h3>
-            <p style="color:var(--gold-light);font-size:0.8rem;">ID: #G-${g.id} · ${escapeHtml(g.nationality || "Citizen")}</p>
-          </div>
+          <button class="btn btn-secondary btn-sm" onclick="closeDrawer('drawer-guest'); openEditGuestModal(${g.id})">✏️ Edit Profile</button>
         </div>
 
         <div style="background:var(--charcoal-1);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:20px;margin-bottom:20px;">
@@ -794,7 +803,9 @@ function switchDrawerTab(tab) {
   if (target) target.classList.add("active");
 }
 
-function confirmDeleteGuest(id, name) {
+function confirmDeleteGuest(id) {
+  const guest = allGuests.find(g => String(g.id) === String(id));
+  const name = guest ? guest.full_name : "this guest";
   showConfirm(
     "Delete Guest Profile",
     `Are you sure you want to delete the profile for "${name}"? This action cannot be undone.`,
@@ -806,10 +817,10 @@ function confirmDeleteGuest(id, name) {
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          showToast("success", "Deleted", data.message);
+          showToast("success", "Deleted", data.message || "Guest profile deleted.");
           loadAllData();
         } else {
-          showToast("error", "Failed", data.message || "Failed to delete guest.");
+          showToast("error", "Failed", data.message || data.error || "Failed to delete guest.");
         }
       } catch (e) {
         showToast("error", "Error", "Failed to delete guest.");
@@ -898,9 +909,17 @@ function renderRoomsGrid(rooms) {
           </div>
         ` : ""}
       </div>
-      <div class="room-lux-footer">
-        <span class="badge-lux badge-${r.status}">${r.status}</span>
-        <span class="badge-lux badge-${r.housekeeping_status || 'Clean'}">🧹 ${r.housekeeping_status || 'Clean'}</span>
+      <div class="room-lux-footer" style="display:flex; justify-content:space-between; width:100%;">
+        <div>
+          <span class="badge-lux badge-${r.status}">${r.status}</span>
+          <span class="badge-lux badge-${r.housekeeping_status || 'Clean'}">🧹 ${r.housekeeping_status || 'Clean'}</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          ${(currentUser && currentUser.role === 'Admin') ? `
+          <button class="btn btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); openEditRoomModal(${r.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="event.stopPropagation(); deleteRoom(${r.id})">Delete</button>
+          ` : ''}
+        </div>
       </div>
     `;
     grid.appendChild(card);
@@ -986,6 +1005,13 @@ function openRoomDrawer(roomNum) {
         <button class="btn btn-secondary btn-sm" onclick="updateHKQuick('${room.room_number}', 'Maintenance')">🔧 Maintenance</button>
       </div>
     </div>
+
+    ${(currentUser && (currentUser.role === 'Admin' || currentUser.role === 'Manager')) ? `
+      <div style="margin-top:16px;display:flex;gap:10px;">
+        <button class="btn btn-secondary btn-sm flex-1" onclick="closeDrawer('drawer-room'); openEditRoomModal(${room.id})">✏️ Edit Room</button>
+        ${currentUser.role === 'Admin' ? `<button class="btn btn-danger btn-sm flex-1" onclick="closeDrawer('drawer-room'); deleteRoom(${room.id})">🗑️ Delete Room</button>` : ''}
+      </div>
+    ` : ''}
   `;
 
   openDrawer("drawer-room");
@@ -1144,22 +1170,39 @@ function updateCheckOutPreview(roomNum) {
   if (!preview) return;
 
   const room = allRooms.find(r => String(r.room_number) === String(roomNum));
-  if (!room) {
+  const activeBooking = allBookings.find(b => String(b.room_number) === String(roomNum) && b.status === "Checked-in");
+  
+  if (!room || !activeBooking) {
     preview.innerHTML = `<p style="color:var(--text-muted);font-size:0.85rem;">Select an occupied room to preview calculation.</p>`;
     return;
   }
 
   const sVal = parseFloat(document.getElementById("wiz-co-services")?.value) || 0;
-  const roomCharge = room.price_per_night;
-  const total = roomCharge + sVal;
+  
+  const checkInDate = new Date(activeBooking.check_in_date);
+  const checkOutDate = new Date();
+  
+  checkInDate.setHours(0,0,0,0);
+  checkOutDate.setHours(0,0,0,0);
+  
+  const diffTime = Math.max(0, checkOutDate - checkInDate);
+  let nights = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  if (nights < 1) nights = 1;
+
+  const roomCharge = room.price_per_night * nights;
+  const subtotal = roomCharge + sVal;
+  const tax = subtotal * 0.12;
+  const total = subtotal + tax;
 
   preview.innerHTML = `
     <div class="inv-section-title">Preliminary Folio Calculation</div>
     <div style="font-size:0.88rem;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
       <div>Room: <strong>Room ${room.room_number} (${room.room_type})</strong></div>
       <div>Guest: <strong>${escapeHtml(room.guest || "Guest")}</strong></div>
+      <div>Stay: <strong>${nights} Night(s)</strong></div>
       <div>Base Room Rate: <strong>$${roomCharge.toFixed(2)}</strong></div>
       <div>Services / Addons: <strong>$${sVal.toFixed(2)}</strong></div>
+      <div>Tax (12%): <strong>$${tax.toFixed(2)}</strong></div>
       <div style="grid-column:span 2;padding-top:8px;border-top:1px solid var(--border-subtle);font-size:1.05rem;color:var(--gold-light);">
         Final Estimated Balance: <strong>$${total.toFixed(2)}</strong>
       </div>
@@ -1743,6 +1786,9 @@ function openModal(id) {
 function closeModal(id) {
   const el = document.getElementById(id);
   if (el) el.classList.remove("active");
+  if (id === "modal-room") editingRoomId = null;
+  if (id === "modal-guest") editingGuestId = null;
+  if (id === "modal-booking") editingBookingId = null;
 }
 
 function openDrawer(id) {
@@ -1766,11 +1812,132 @@ document.addEventListener("click", (e) => {
 });
 
 function openAddGuestModal() {
+  editingGuestId = null;
   document.getElementById("form-guest")?.reset();
+  const title = document.querySelector("#modal-guest h3");
+  if (title) title.textContent = "Register Guest Profile";
+  const btn = document.querySelector("#modal-guest button[type=submit]");
+  if (btn) btn.textContent = "Create Profile";
   openModal("modal-guest");
 }
 
+function openEditGuestModal(guestId) {
+  const guest = allGuests.find(g => String(g.id) === String(guestId));
+  if (!guest) return;
+  
+  editingGuestId = guestId;
+  document.getElementById("form-guest")?.reset();
+  
+  const title = document.querySelector("#modal-guest h3");
+  if (title) title.textContent = "Edit Guest Profile";
+  const btn = document.querySelector("#modal-guest button[type=submit]");
+  if (btn) btn.textContent = "Save Changes";
+  
+  const gName = document.getElementById("g-name");
+  const gPhone = document.getElementById("g-phone");
+  const gEmail = document.getElementById("g-email");
+  const gCity = document.getElementById("g-city");
+  const gIdtype = document.getElementById("g-idtype");
+  const gIdnum = document.getElementById("g-idnum");
+  
+  if (gName) gName.value = guest.full_name || "";
+  if (gPhone) gPhone.value = guest.phone || "";
+  if (gEmail) gEmail.value = guest.email || "";
+  if (gCity) gCity.value = guest.city || "";
+  if (gIdtype) gIdtype.value = guest.id_proof_type || "";
+  if (gIdnum) gIdnum.value = guest.id_proof_number || "";
+  
+  openModal("modal-guest");
+}
+
+window.calculateBooking = function() {
+  const checkIn = document.getElementById("b-in")?.value;
+  const checkOut = document.getElementById("b-out")?.value;
+  const roomSelect = document.getElementById("b-room");
+  const advance = parseFloat(document.getElementById("b-advance")?.value) || 0;
+  const discount = parseFloat(document.getElementById("b-discount")?.value) || 0;
+
+  if (checkIn && checkOut && roomSelect) {
+    const cin = new Date(checkIn);
+    const cout = new Date(checkOut);
+    const diffTime = cout - cin;
+    let nights = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (nights < 1 || isNaN(nights)) nights = 0;
+    
+    // Filter rooms based on overlap
+    const currentSelectedRoom = roomSelect.value;
+    roomSelect.innerHTML = `<option value="">— Select Luxury Room —</option>`;
+    
+    allRooms.forEach(r => {
+      if (r.status === "Maintenance") return;
+      
+      const overlap = allBookings.some(b => {
+        if (String(b.room_id) !== String(r.id)) return false;
+        if (b.status !== "Confirmed" && b.status !== "Checked-in") return false;
+        if (editingBookingId && String(b.id) === String(editingBookingId)) return false;
+        
+        const bIn = new Date(b.check_in_date);
+        const bOut = new Date(b.check_out_date);
+        return !(bOut <= cin || bIn >= cout);
+      });
+      
+      let isBlockedForToday = false;
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      if (cin.getTime() === today.getTime() && r.status === "Cleaning") {
+          isBlockedForToday = true;
+      }
+      
+      if (!overlap && !isBlockedForToday) {
+        const opt = document.createElement("option");
+        opt.value = r.id;
+        opt.textContent = `Room ${r.room_number} — ${r.room_type} ($${r.price_per_night}/night)`;
+        roomSelect.appendChild(opt);
+      }
+    });
+    
+    if (currentSelectedRoom) {
+      roomSelect.value = currentSelectedRoom;
+    }
+
+    document.getElementById("b-nights").textContent = nights;
+    
+    if (nights > 0 && roomSelect.value) {
+      const roomId = parseInt(roomSelect.value, 10);
+      const room = allRooms.find(r => r.id === roomId);
+      if (room) {
+        const subtotal = room.price_per_night * nights;
+        const tax = subtotal * 0.12;
+        const total = subtotal + tax - discount;
+        let balance = total - advance;
+        if (balance < 0) balance = 0;
+    
+        document.getElementById("b-subtotal").textContent = "$" + subtotal.toFixed(2);
+        document.getElementById("b-tax").textContent = "$" + tax.toFixed(2);
+        document.getElementById("b-total").textContent = "$" + total.toFixed(2);
+        document.getElementById("b-balance").textContent = "$" + balance.toFixed(2);
+        return;
+      }
+    }
+  }
+  
+  if (document.getElementById("b-subtotal")) {
+    document.getElementById("b-nights").textContent = "0";
+    document.getElementById("b-subtotal").textContent = "$0.00";
+    document.getElementById("b-tax").textContent = "$0.00";
+    document.getElementById("b-total").textContent = "$0.00";
+    document.getElementById("b-balance").textContent = "$0.00";
+  }
+};
+
 async function openNewBookingModal() {
+  editingBookingId = null;
+  document.getElementById("form-booking")?.reset();
+  const title = document.querySelector("#modal-booking h3");
+  if (title) title.textContent = "Create Reservation";
+  const btn = document.querySelector("#modal-booking button[type=submit]");
+  if (btn) btn.textContent = "Confirm Reservation";
+
   // Populate guests
   try {
     const gRes = await fetch("/api/guests", {
@@ -1791,26 +1958,6 @@ async function openNewBookingModal() {
     }
   } catch (e) {}
 
-  // Populate rooms
-  try {
-    const rRes = await fetch("/api/rooms", {
-      headers: { "Authorization": `Bearer ${currentToken}` }
-    });
-    if (rRes.ok) {
-      const rData = await rRes.json();
-      const rSel = document.getElementById("b-room");
-      if (rSel) {
-        rSel.innerHTML = `<option value="">— Select Luxury Room —</option>`;
-        (rData.list || []).filter(r => r.status === "Available").forEach(r => {
-          const opt = document.createElement("option");
-          opt.value = r.id;
-          opt.textContent = `Room ${r.room_number} — ${r.room_type} ($${r.price_per_night}/night)`;
-          rSel.appendChild(opt);
-        });
-      }
-    }
-  } catch (e) {}
-
   // Default dates
   const today = new Date().toISOString().split("T")[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
@@ -1819,12 +1966,172 @@ async function openNewBookingModal() {
   if (bIn) bIn.value = today;
   if (bOut) bOut.value = tomorrow;
 
+  // Clear previous subtotal calculations
+  document.getElementById("b-nights").textContent = "0";
+  document.getElementById("b-subtotal").textContent = "$0.00";
+  document.getElementById("b-tax").textContent = "$0.00";
+  document.getElementById("b-total").textContent = "$0.00";
+  document.getElementById("b-balance").textContent = "$0.00";
+
   openModal("modal-booking");
+  
+  // Calculate rooms for default dates
+  setTimeout(calculateBooking, 100);
+}
+
+async function openEditBookingModal(bookingId) {
+  editingBookingId = bookingId;
+  const booking = allBookings.find(b => String(b.id) === String(bookingId));
+  if (!booking) return;
+
+  document.getElementById("form-booking")?.reset();
+  const title = document.querySelector("#modal-booking h3");
+  if (title) title.textContent = "Edit Reservation";
+  const btn = document.querySelector("#modal-booking button[type=submit]");
+  if (btn) btn.textContent = "Save Changes";
+
+  // Populate guests
+  try {
+    const gRes = await fetch("/api/guests", {
+      headers: { "Authorization": `Bearer ${currentToken}` }
+    });
+    if (gRes.ok) {
+      const gData = await gRes.json();
+      const gSel = document.getElementById("b-guest");
+      if (gSel) {
+        gSel.innerHTML = `<option value="">— Select Guest Profile —</option>`;
+        (gData.guests || []).forEach(g => {
+          const opt = document.createElement("option");
+          opt.value = g.id;
+          opt.textContent = `${g.full_name} (${g.phone})`;
+          gSel.appendChild(opt);
+        });
+      }
+    }
+  } catch (e) {}
+
+  // Populate booking data
+  const bGuest = document.getElementById("b-guest");
+  if (bGuest) bGuest.value = booking.guest_id;
+  
+  const bIn = document.getElementById("b-in");
+  if (bIn) bIn.value = booking.check_in_date;
+  
+  const bOut = document.getElementById("b-out");
+  if (bOut) bOut.value = booking.check_out_date;
+
+  const bAdults = document.getElementById("b-adults");
+  if (bAdults) bAdults.value = booking.adults || 1;
+
+  const bChildren = document.getElementById("b-children");
+  if (bChildren) bChildren.value = booking.children || 0;
+
+  const bDiscount = document.getElementById("b-discount");
+  if (bDiscount) bDiscount.value = booking.discount || 0;
+
+  const bAdvance = document.getElementById("b-advance");
+  if (bAdvance) bAdvance.value = booking.advance_payment || 0;
+
+  openModal("modal-booking");
+  
+  // Calculate available rooms (excluding this booking's current room from overlap)
+  // and re-select the room
+  setTimeout(() => {
+    const bRoom = document.getElementById("b-room");
+    if (bRoom) bRoom.value = booking.room_id;
+    calculateBooking();
+  }, 100);
+}
+
+function cancelBooking(bookingId) {
+  showConfirm(
+    "Cancel Reservation",
+    "Are you sure you want to cancel this reservation? The room will be released to inventory.",
+    async () => {
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${currentToken}` }
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast("success", "Cancelled", data.message || "Reservation has been cancelled.");
+          loadAllData();
+        } else {
+          showToast("error", "Error", data.message || "Failed to cancel reservation.");
+        }
+      } catch (e) {
+        showToast("error", "Error", "Failed to cancel reservation.");
+      }
+    }
+  );
 }
 
 function openAddRoomModal() {
+  editingRoomId = null;
   document.getElementById("form-room")?.reset();
+  const title = document.querySelector("#modal-room h3");
+  if (title) title.textContent = "Add New Room";
+  const btn = document.querySelector("#modal-room button[type=submit]");
+  if (btn) btn.textContent = "Create Room";
   openModal("modal-room");
+}
+
+function openEditRoomModal(roomId) {
+  const room = allRooms.find(r => String(r.id) === String(roomId));
+  if (!room) return;
+  
+  editingRoomId = roomId;
+  document.getElementById("form-room")?.reset();
+  
+  const title = document.querySelector("#modal-room h3");
+  if (title) title.textContent = "Edit Room Details";
+  const btn = document.querySelector("#modal-room button[type=submit]");
+  if (btn) btn.textContent = "Save Changes";
+  
+  const rNum = document.getElementById("r-num");
+  const rFloor = document.getElementById("r-floor");
+  const rType = document.getElementById("r-type");
+  const rBed = document.getElementById("r-bed");
+  const rPrice = document.getElementById("r-price");
+  const rCap = document.getElementById("r-capacity");
+  const rAmen = document.getElementById("r-amenities");
+  
+  if (rNum) rNum.value = room.room_number || "";
+  if (rFloor) rFloor.value = room.floor || 1;
+  if (rType) rType.value = room.room_type || "Standard";
+  if (rBed) rBed.value = room.bed_type || "Double";
+  if (rPrice) rPrice.value = room.price_per_night || 100;
+  if (rCap) rCap.value = room.capacity || 2;
+  if (rAmen) rAmen.value = room.amenities || "";
+  
+  openModal("modal-room");
+}
+
+function deleteRoom(roomId) {
+  const room = allRooms.find(r => String(r.id) === String(roomId));
+  const roomNumber = room ? room.room_number : roomId;
+  showConfirm(
+    "Delete Room",
+    `Are you sure you want to permanently delete Room ${roomNumber}? This cannot be undone.`,
+    async () => {
+      try {
+        const res = await fetch(`/api/rooms/${roomId}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${currentToken}` }
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast("success", "Deleted", data.message || "Room has been deleted.");
+          loadAllData();
+        } else {
+          showToast("error", "Error", data.message || data.error || "Failed to delete room.");
+        }
+      } catch (e) {
+        showToast("error", "Error", "Failed to delete room.");
+      }
+    }
+  );
 }
 
 function openHKModal(roomNum, status) {
@@ -1977,12 +2284,20 @@ function setupEventListeners() {
     }
   });
 
-  // Guest Registration
+  // Guest Registration & Edit
   document.getElementById("form-guest")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const full_name = document.getElementById("g-name")?.value.trim();
+    const phone = document.getElementById("g-phone")?.value.trim();
+
+    if (!full_name || !phone) {
+      showToast("error", "Validation Error", "Full name and phone number are required.");
+      return;
+    }
+
     const body = {
-      full_name:       document.getElementById("g-name")?.value.trim(),
-      phone:           document.getElementById("g-phone")?.value.trim(),
+      full_name:       full_name,
+      phone:           phone,
       email:           document.getElementById("g-email")?.value.trim(),
       city:            document.getElementById("g-city")?.value.trim(),
       id_proof_type:   document.getElementById("g-idtype")?.value.trim(),
@@ -1990,18 +2305,21 @@ function setupEventListeners() {
     };
 
     try {
-      const res = await fetch("/api/guests", {
-        method: "POST",
+      const url = editingGuestId ? `/api/guests/${editingGuestId}` : "/api/guests";
+      const method = editingGuestId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentToken}` },
         body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("success", "Guest Profile Saved", data.message);
+        showToast("success", editingGuestId ? "Profile Updated" : "Guest Profile Saved", data.message);
         closeModal("modal-guest");
+        editingGuestId = null;
         loadAllData();
       } else {
-        showToast("error", "Registration Failed", data.message || data.error || "Failed to create guest.");
+        showToast("error", "Registration Failed", data.message || data.error || "Failed to save guest.");
       }
     } catch (err) {
       showToast("error", "Error", "Failed to save guest profile.");
@@ -2016,25 +2334,31 @@ function setupEventListeners() {
       room_id:         document.getElementById("b-room")?.value,
       check_in_date:   document.getElementById("b-in")?.value,
       check_out_date:  document.getElementById("b-out")?.value,
+      adults:          parseInt(document.getElementById("b-adults")?.value) || 1,
+      children:        parseInt(document.getElementById("b-children")?.value) || 0,
+      discount:        parseFloat(document.getElementById("b-discount")?.value) || 0,
       advance_payment: parseFloat(document.getElementById("b-advance")?.value) || 0
     };
 
+    const method = editingBookingId ? "PUT" : "POST";
+    const endpoint = editingBookingId ? `/api/bookings/${editingBookingId}` : "/api/bookings";
+
     try {
-      const res = await fetch("/api/bookings", {
-        method: "POST",
+      const res = await fetch(endpoint, {
+        method: method,
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentToken}` },
         body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("success", "Reservation Confirmed", data.message);
+        showToast("success", "Reservation Saved", data.message);
         closeModal("modal-booking");
         loadAllData();
       } else {
         showToast("error", "Booking Conflict", data.message || data.error || "Overlap detected.");
       }
     } catch (err) {
-      showToast("error", "Error", "Failed to confirm reservation.");
+      showToast("error", "Error", "Failed to save reservation.");
     }
   });
 
@@ -2093,35 +2417,50 @@ function setupEventListeners() {
     }
   });
 
-  // Add Room
+  // Add / Edit Property Room (Admin only)
   document.getElementById("form-room")?.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const room_number = document.getElementById("r-num")?.value.trim();
+    const price_per_night = parseFloat(document.getElementById("r-price")?.value) || 0;
+
+    if (!room_number) {
+      showToast("error", "Validation Error", "Room number is required.");
+      return;
+    }
+    if (price_per_night <= 0) {
+      showToast("error", "Validation Error", "Price per night must be greater than 0.");
+      return;
+    }
+
     const body = {
-      room_number:     document.getElementById("r-num")?.value.trim(),
+      room_number:     room_number,
       floor:           parseInt(document.getElementById("r-floor")?.value) || 1,
       room_type:       document.getElementById("r-type")?.value,
       bed_type:        document.getElementById("r-bed")?.value,
-      price_per_night: parseFloat(document.getElementById("r-price")?.value) || 100,
+      price_per_night: price_per_night,
       capacity:        parseInt(document.getElementById("r-capacity")?.value) || 2,
       amenities:       document.getElementById("r-amenities")?.value.trim()
     };
 
     try {
-      const res = await fetch("/api/rooms", {
-        method: "POST",
+      const url = editingRoomId ? `/api/rooms/${editingRoomId}` : "/api/rooms";
+      const method = editingRoomId ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method: method,
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentToken}` },
         body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("success", "Room Added", data.message);
+        showToast("success", editingRoomId ? "Room Updated" : "Room Added", data.message);
         closeModal("modal-room");
+        editingRoomId = null;
         loadAllData();
       } else {
-        showToast("error", "Error", data.message || data.error || "Failed to add room.");
+        showToast("error", "Error", data.message || data.error || "Failed to save room.");
       }
     } catch (err) {
-      showToast("error", "Error", "Failed to add room.");
+      showToast("error", "Error", "Failed to save room.");
     }
   });
 

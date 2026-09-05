@@ -111,6 +111,10 @@ def api_check_in(rooms, room_num, guest_name, nights=1, phone="9999999999", emai
         conn.close()
         return False, f"Room {room_num} is currently Occupied.", None
 
+    if room["status"] == "Cleaning" or room.get("housekeeping_status") == "Cleaning":
+        conn.close()
+        return False, f"Room {room_num} is currently being cleaned. Check-in not allowed.", None
+
     if room["status"] == "Maintenance":
         conn.close()
         return False, f"Room {room_num} is currently under Maintenance.", None
@@ -139,7 +143,16 @@ def api_check_in(rooms, room_num, guest_name, nights=1, phone="9999999999", emai
         guest_id = cursor.lastrowid
 
     # Compute stay dates
-    today_str = get_current_date_str()
+    try:
+        from datetime import datetime, timedelta
+        cin = datetime.now()
+        cout = cin + timedelta(days=nights)
+        check_in_date = cin.strftime("%Y-%m-%d")
+        check_out_date = cout.strftime("%Y-%m-%d")
+    except Exception:
+        check_in_date = get_current_date_str()
+        check_out_date = get_current_date_str()
+
     booking_code = f"BK-{room_num}-{secrets.token_hex(3).upper()}"
     
     # Check if this room had a confirmed booking for today
@@ -158,10 +171,27 @@ def api_check_in(rooms, room_num, guest_name, nights=1, phone="9999999999", emai
         WHERE id = ?
         """, (booking_id,))
     else:
+        # Walk-in overlap check
+        overlap_query = """
+        SELECT id FROM bookings
+        WHERE room_id = ? 
+          AND status IN ('Confirmed', 'Checked-in')
+          AND NOT (check_out_date <= ? OR check_in_date >= ?)
+        """
+        cursor.execute(overlap_query, (room["id"], check_in_date, check_out_date))
+        if cursor.fetchone():
+            conn.close()
+            return False, f"Room {room_num} is already booked for these dates.", None
+
+        room_price = float(room["price_per_night"])
+        subtotal = room_price * nights
+        tax_amount = subtotal * (12.0 / 100.0)
+        grand_total = subtotal + tax_amount
+
         cursor.execute("""
-        INSERT INTO bookings (booking_code, guest_id, room_id, check_in_date, check_out_date, actual_check_in, status)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'Checked-in')
-        """, (booking_code, guest_id, room["id"], today_str, today_str))
+        INSERT INTO bookings (booking_code, guest_id, room_id, check_in_date, check_out_date, actual_check_in, room_price, tax_amount, grand_total, status)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, 'Checked-in')
+        """, (booking_code, guest_id, room["id"], check_in_date, check_out_date, room_price, tax_amount, grand_total))
         booking_id = cursor.lastrowid
 
     # Update Room status to Occupied
@@ -191,7 +221,9 @@ def api_check_out(rooms, query, services_charge=0.0):
 
     # Find active occupied room or matching guest
     cursor.execute("""
-    SELECT r.id as room_id, r.room_number, r.room_type, r.price_per_night, b.id as booking_id, g.full_name as guest, g.id as guest_id
+    SELECT r.id as room_id, r.room_number, r.room_type, r.price_per_night, 
+           b.id as booking_id, b.check_in_date, b.check_out_date, b.advance_payment, b.discount, b.room_price,
+           g.full_name as guest, g.id as guest_id
     FROM rooms r
     JOIN bookings b ON r.id = b.room_id AND b.status = 'Checked-in'
     JOIN guests g ON b.guest_id = g.id
@@ -210,10 +242,40 @@ def api_check_out(rooms, query, services_charge=0.0):
     except (ValueError, TypeError):
         services_charge = 0.0
 
-    nights = 1
-    price = float(target["price_per_night"])
-    room_charge = price * nights
-    total_bill = room_charge + services_charge
+    try:
+        from datetime import datetime
+        cin = datetime.strptime(target["check_in_date"], "%Y-%m-%d")
+        if target.get("check_out_date"):
+            cout_sched = datetime.strptime(target["check_out_date"], "%Y-%m-%d")
+            sched_nights = (cout_sched - cin).days
+        else:
+            sched_nights = 1
+
+        cout_actual = datetime.now()
+        actual_nights = (cout_actual - cin).days
+
+        nights = max(sched_nights, actual_nights)
+        if nights < 1:
+            nights = 1
+    except Exception:
+        nights = 1
+
+    room_price = float(target.get("room_price") or target["price_per_night"])
+    if room_price <= 0:
+        room_price = float(target["price_per_night"])
+
+    room_charge = room_price * nights
+    subtotal = room_charge + services_charge
+    tax_rate = 12.0
+    tax_amount = subtotal * (tax_rate / 100.0)
+    discount = float(target.get("discount", 0.0))
+    grand_total = subtotal + tax_amount - discount
+    advance_paid = float(target.get("advance_payment", 0.0))
+    balance_due = grand_total - advance_paid
+    if balance_due < 0:
+        balance_due = 0.0
+
+    total_bill = grand_total
 
     # Record Check-Out in DB
     cursor.execute("""
@@ -235,15 +297,15 @@ def api_check_out(rooms, query, services_charge=0.0):
     # Generate Itemized Invoice Record
     inv_num = f"INV-{target['room_number']}-{secrets.token_hex(3).upper()}"
     cursor.execute("""
-    INSERT INTO invoices (invoice_number, booking_id, guest_id, room_id, room_charges, service_charges, grand_total, amount_paid, payment_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Paid')
-    """, (inv_num, target["booking_id"], target["guest_id"], target["room_id"], room_charge, services_charge, total_bill, total_bill))
+    INSERT INTO invoices (invoice_number, booking_id, guest_id, room_id, room_charges, service_charges, discount, tax_rate, tax_amount, grand_total, advance_paid, amount_paid, balance_due, payment_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Paid')
+    """, (inv_num, target["booking_id"], target["guest_id"], target["room_id"], room_charge, services_charge, discount, tax_rate, tax_amount, grand_total, advance_paid, grand_total, balance_due))
 
     # Record Payment
     cursor.execute("""
     INSERT INTO payments (invoice_number, booking_id, amount, payment_method)
     VALUES (?, ?, ?, 'Cash / Direct')
-    """, (inv_num, target["booking_id"], total_bill))
+    """, (inv_num, target["booking_id"], grand_total))
 
     conn.commit()
     conn.close()
@@ -253,10 +315,17 @@ def api_check_out(rooms, query, services_charge=0.0):
         "room_num": target["room_number"],
         "guest": target["guest"],
         "type": target["room_type"],
-        "price_per_night": price,
+        "price_per_night": room_price,
         "nights": nights,
         "room_charge": room_charge,
         "services_charge": services_charge,
+        "subtotal": subtotal,
+        "tax_rate": tax_rate,
+        "tax_amount": tax_amount,
+        "discount": discount,
+        "advance_paid": advance_paid,
+        "grand_total": grand_total,
+        "balance_due": balance_due,
         "total_bill": total_bill
     }
 

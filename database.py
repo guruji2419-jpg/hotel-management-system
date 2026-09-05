@@ -74,11 +74,24 @@ def get_engine():
             connect_args={'sslmode': 'require'} if 'localhost' not in raw_url and '127.0.0.1' not in raw_url and 'sslmode' not in raw_url else {}
         )
     else:
+        from sqlalchemy.pool import NullPool
         db_path = get_sqlite_path()
         _engine = create_engine(
             f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False}
+            poolclass=NullPool,
+            connect_args={"check_same_thread": False, "timeout": 30.0}
         )
+        from sqlalchemy import event
+        @event.listens_for(_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.close()
+            except Exception:
+                pass
     return _engine
 
 # ==========================================================================
@@ -104,9 +117,10 @@ class DictRow(dict):
 # ==========================================================================
 class UnifiedCursor:
     """Cursor wrapper that transparently normalizes queries and result sets between SQLite & PostgreSQL."""
-    def __init__(self, connection, db_type):
+    def __init__(self, connection, db_type, parent_conn=None):
         self._conn = connection
         self._db_type = db_type
+        self._parent_conn = parent_conn
         self.lastrowid = None
         self.rowcount = -1
         self._results = None
@@ -156,6 +170,11 @@ class UnifiedCursor:
                 except Exception:
                     pass
         
+        # Ensure transaction is active for modifying statements
+        is_modifying = translated.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER"))
+        if is_modifying and self._parent_conn:
+            self._parent_conn._ensure_trans()
+
         self._results = self._conn.execute(text(translated), params_dict)
         self.lastrowid = self._results.lastrowid if hasattr(self._results, "lastrowid") else None
         self.rowcount = self._results.rowcount
@@ -212,25 +231,60 @@ class UnifiedConnection:
     def __init__(self, sa_conn, db_type):
         self._sa_conn = sa_conn
         self._db_type = db_type
-        self._trans = self._sa_conn.begin()
+        self._trans = None
+
+    def _ensure_trans(self):
+        if self._trans is None and not self._sa_conn.in_transaction():
+            try:
+                self._trans = self._sa_conn.begin()
+            except Exception:
+                pass
 
     def cursor(self):
-        return UnifiedCursor(self._sa_conn, self._db_type)
+        return UnifiedCursor(self._sa_conn, self._db_type, self)
 
     def commit(self):
-        self._trans.commit()
-        self._trans = self._sa_conn.begin()
+        if self._trans is not None:
+            try:
+                self._trans.commit()
+            except Exception:
+                pass
+            self._trans = None
+        try:
+            if self._sa_conn.in_transaction():
+                self._sa_conn.commit()
+        except Exception:
+            pass
 
     def rollback(self):
-        self._trans.rollback()
-        self._trans = self._sa_conn.begin()
+        if self._trans is not None:
+            try:
+                self._trans.rollback()
+            except Exception:
+                pass
+            self._trans = None
+        try:
+            if self._sa_conn.in_transaction():
+                self._sa_conn.rollback()
+        except Exception:
+            pass
 
     def close(self):
         try:
-            self._trans.rollback()
+            if self._trans is not None:
+                self._trans.rollback()
+                self._trans = None
         except Exception:
             pass
-        self._sa_conn.close()
+        try:
+            if self._sa_conn.in_transaction():
+                self._sa_conn.rollback()
+        except Exception:
+            pass
+        try:
+            self._sa_conn.close()
+        except Exception:
+            pass
 
     def __enter__(self):
         return self
@@ -388,9 +442,21 @@ def init_db():
         status TEXT DEFAULT 'Confirmed',
         special_requests TEXT,
         advance_payment {real_type} DEFAULT 0.0,
+        room_price {real_type} DEFAULT 0.0,
+        tax_amount {real_type} DEFAULT 0.0,
+        discount {real_type} DEFAULT 0.0,
+        grand_total {real_type} DEFAULT 0.0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    # Safe migrations for existing databases
+    for col, ctype in [("room_price", real_type), ("tax_amount", real_type), ("discount", real_type), ("grand_total", real_type)]:
+        try:
+            cursor.execute(f"ALTER TABLE bookings ADD COLUMN {col} {ctype} DEFAULT 0.0")
+        except Exception:
+            pass
+
 
     # 6. Services Table
     cursor.execute(f"""

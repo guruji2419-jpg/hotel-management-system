@@ -278,6 +278,12 @@ def handle_single_guest(guest_id):
             if user.get("role") not in ["Admin", "Manager"]:
                 conn.close()
                 return api_error("Delete permission denied. Admin or Manager role required.", 403)
+            # Prevent deletion if guest has active bookings
+            cursor.execute("SELECT COUNT(*) as cnt FROM bookings WHERE guest_id = ? AND status IN ('Reserved', 'Checked-in')", (guest_id,))
+            active_b = cursor.fetchone()
+            if active_b and active_b["cnt"] > 0:
+                conn.close()
+                return api_error("Cannot delete guest with active reservations or check-ins.", 400)
             cursor.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
             conn.commit()
             conn.close()
@@ -287,9 +293,19 @@ def handle_single_guest(guest_id):
             data = request.get_json() or {}
             cursor.execute("""
             UPDATE guests SET 
-                full_name = ?, phone = ?, email = ?, address = ?, city = ?, country = ?,
-                id_proof_type = ?, id_proof_number = ?, emergency_name = ?, emergency_phone = ?,
-                special_requests = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                full_name = COALESCE(?, full_name), 
+                phone = COALESCE(?, phone), 
+                email = COALESCE(?, email), 
+                address = COALESCE(?, address), 
+                city = COALESCE(?, city), 
+                country = COALESCE(?, country),
+                id_proof_type = COALESCE(?, id_proof_type), 
+                id_proof_number = COALESCE(?, id_proof_number), 
+                emergency_name = COALESCE(?, emergency_name), 
+                emergency_phone = COALESCE(?, emergency_phone),
+                special_requests = COALESCE(?, special_requests), 
+                notes = COALESCE(?, notes), 
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """, (
                 data.get("full_name"), data.get("phone"), data.get("email"), data.get("address"),
@@ -342,13 +358,9 @@ def handle_single_guest(guest_id):
 @app.route("/api/rooms", methods=["GET", "POST"])
 def handle_rooms():
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
         if request.method == "POST":
             user = get_auth_user()
             if not user or not check_permission(user.get("role"), "rooms"):
-                conn.close()
                 return api_error("Access denied.", 403)
 
             data = request.get_json() or {}
@@ -363,9 +375,10 @@ def handle_rooms():
             desc = data.get("description", "")
 
             if not r_num:
-                conn.close()
                 return api_error("Room number is required.", 400)
 
+            conn = get_connection()
+            cursor = conn.cursor()
             try:
                 cursor.execute("""
                 INSERT INTO rooms (room_number, floor, room_type, bed_type, capacity, price_per_night, ac_type, amenities, description)
@@ -379,6 +392,9 @@ def handle_rooms():
             except Exception as e:
                 conn.close()
                 return api_error(f"Room creation error: {e}", 400)
+
+        conn = get_connection()
+        cursor = conn.cursor()
 
         # GET logic with optional filters
         status_filter = request.args.get("status")
@@ -440,6 +456,21 @@ def handle_single_room(room_id):
         cursor = conn.cursor()
 
         if request.method == "DELETE":
+            if user.get("role") not in ["Admin", "Manager"]:
+                conn.close()
+                return api_error("Delete permission denied. Admin or Manager role required.", 403)
+
+            cursor.execute("SELECT status, room_number FROM rooms WHERE id = ?", (room_id,))
+            r_check = cursor.fetchone()
+            if not r_check:
+                conn.close()
+                return api_error("Room not found.", 404)
+            if r_check["status"] == "Occupied":
+                conn.close()
+                return api_error(f"Cannot delete Room {r_check['room_number']} because it is currently Occupied.", 400)
+
+            # Clean up associated housekeeping record
+            cursor.execute("DELETE FROM housekeeping WHERE room_number = ?", (r_check["room_number"],))
             cursor.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
             conn.commit()
             conn.close()
@@ -447,12 +478,28 @@ def handle_single_room(room_id):
 
         if request.method == "PUT":
             data = request.get_json() or {}
+            new_room_number = data.get("room_number")
             new_status = data.get("status")
             new_hk_status = data.get("housekeeping_status")
 
+            # Check if updating room_number causes duplicate
+            if new_room_number:
+                cursor.execute("SELECT id FROM rooms WHERE room_number = ? AND id != ?", (new_room_number, room_id))
+                if cursor.fetchone():
+                    conn.close()
+                    return api_error(f"Room number {new_room_number} already exists.", 409)
+
+            # Get current room number before update
+            cursor.execute("SELECT room_number FROM rooms WHERE id = ?", (room_id,))
+            curr_row = cursor.fetchone()
+            old_room_number = curr_row["room_number"] if curr_row else None
+
             cursor.execute("""
             UPDATE rooms SET 
+                room_number = COALESCE(?, room_number),
+                floor = COALESCE(?, floor),
                 room_type = COALESCE(?, room_type),
+                bed_type = COALESCE(?, bed_type),
                 price_per_night = COALESCE(?, price_per_night),
                 status = COALESCE(?, status),
                 housekeeping_status = COALESCE(?, housekeeping_status),
@@ -460,7 +507,10 @@ def handle_single_room(room_id):
                 capacity = COALESCE(?, capacity)
             WHERE id = ?
             """, (
+                new_room_number,
+                data.get("floor"),
                 data.get("room_type"),
+                data.get("bed_type"),
                 data.get("price_per_night"),
                 new_status,
                 new_hk_status,
@@ -469,17 +519,19 @@ def handle_single_room(room_id):
                 room_id
             ))
 
+            # If room_number changed, update housekeeping table
+            if new_room_number and old_room_number and new_room_number != old_room_number:
+                cursor.execute("UPDATE housekeeping SET room_number = ? WHERE room_number = ?", (new_room_number, old_room_number))
+
             # Sync with housekeeping table if status changed
             if new_hk_status or new_status:
-                cursor.execute("SELECT room_number FROM rooms WHERE id = ?", (room_id,))
-                r_row = cursor.fetchone()
-                if r_row:
-                    r_num = r_row["room_number"]
+                target_room_num = new_room_number or old_room_number
+                if target_room_num:
                     hk_val = new_hk_status or ("Clean" if new_status == "Available" else "Cleaning")
                     cursor.execute("""
                     UPDATE housekeeping SET cleaning_status = ?, last_updated = CURRENT_TIMESTAMP
                     WHERE room_number = ?
-                    """, (hk_val, r_num))
+                    """, (hk_val, target_room_num))
 
             conn.commit()
             conn.close()
@@ -509,12 +561,38 @@ def handle_bookings():
             room_id = data.get("room_id")
             check_in_date = data.get("check_in_date")
             check_out_date = data.get("check_out_date")
+            adults = int(data.get("adults", 1))
+            children = int(data.get("children", 0))
             advance = float(data.get("advance_payment", 0.0))
+            discount = float(data.get("discount", 0.0))
             source = data.get("booking_source", "Direct Website")
 
             if not guest_id or not room_id or not check_in_date or not check_out_date:
                 conn.close()
                 return api_error("Guest, Room, Check-in and Check-out dates are required.", 400)
+
+            # Date calculation
+            try:
+                from datetime import datetime
+                cin = datetime.strptime(check_in_date, "%Y-%m-%d")
+                cout = datetime.strptime(check_out_date, "%Y-%m-%d")
+                nights = (cout - cin).days
+                if nights < 1:
+                    conn.close()
+                    return api_error("Check-out date must be after check-in date.", 400)
+            except Exception:
+                conn.close()
+                return api_error("Invalid date format. Use YYYY-MM-DD.", 400)
+
+            # Check room exists and get price
+            cursor.execute("SELECT price_per_night, status FROM rooms WHERE id = ?", (room_id,))
+            rm = cursor.fetchone()
+            if not rm:
+                conn.close()
+                return api_error("Room not found.", 404)
+            if rm["status"] == "Maintenance":
+                conn.close()
+                return api_error("Room is under maintenance and cannot be booked.", 409)
 
             # CRITICAL SERVER-SIDE OVERLAP PREVENTION
             overlap_query = """
@@ -532,18 +610,32 @@ def handle_bookings():
                     409
                 )
 
+            # Deterministic Math
+            room_price = float(rm["price_per_night"])
+            subtotal = room_price * nights
+            tax_rate = 12.0
+            tax_amount = subtotal * (tax_rate / 100.0)
+            grand_total = subtotal + tax_amount - discount
+
             booking_code = f"RES-{int(os.urandom(3).hex(), 16)}"
             cursor.execute("""
-            INSERT INTO bookings (booking_code, guest_id, room_id, check_in_date, check_out_date, booking_source, advance_payment, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Confirmed')
-            """, (booking_code, guest_id, room_id, check_in_date, check_out_date, source, advance))
+            INSERT INTO bookings (
+                booking_code, guest_id, room_id, check_in_date, check_out_date, adults, children, 
+                booking_source, advance_payment, room_price, tax_amount, discount, grand_total, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Confirmed')
+            """, (
+                booking_code, guest_id, room_id, check_in_date, check_out_date, adults, children, 
+                source, advance, room_price, tax_amount, discount, grand_total
+            ))
             
-            # Update room status to Reserved if available
+            new_booking_id = cursor.lastrowid
+            # Only update status if it was 'Available', but keep its current state if it's 'Cleaning' or 'Occupied'
             cursor.execute("UPDATE rooms SET status = 'Reserved' WHERE id = ? AND status = 'Available'", (room_id,))
 
             conn.commit()
             conn.close()
-            return api_success({"booking_code": booking_code}, message=f"Reservation {booking_code} confirmed successfully!", status_code=201)
+            return api_success({"booking_code": booking_code, "booking_id": new_booking_id}, message=f"Reservation {booking_code} confirmed successfully!", status_code=201)
 
         # GET Bookings List
         cursor.execute("""
@@ -575,35 +667,101 @@ def handle_single_booking(booking_id):
             cursor.execute("SELECT room_id, status FROM bookings WHERE id = ?", (booking_id,))
             bk = cursor.fetchone()
             if bk:
-                cursor.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
+                cursor.execute("UPDATE bookings SET status = 'Cancelled' WHERE id = ?", (booking_id,))
                 if bk["status"] in ["Confirmed", "Checked-in"]:
-                    cursor.execute("UPDATE rooms SET status = 'Available' WHERE id = ?", (bk["room_id"],))
+                    cursor.execute("UPDATE rooms SET status = 'Available' WHERE id = ? AND status IN ('Reserved', 'Occupied')", (bk["room_id"],))
                 conn.commit()
             conn.close()
-            return api_success(message="Reservation deleted.")
+            return api_success(message="Reservation cancelled.")
 
         if request.method == "PUT":
             data = request.get_json() or {}
-            new_status = data.get("status")
-            cursor.execute("SELECT room_id, status FROM bookings WHERE id = ?", (booking_id,))
+            
+            cursor.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,))
             bk = cursor.fetchone()
             if not bk:
                 conn.close()
                 return api_error("Booking not found.", 404)
 
-            cursor.execute("UPDATE bookings SET status = COALESCE(?, status) WHERE id = ?", (new_status, booking_id))
+            # Edit logic
+            if "check_in_date" in data:
+                # Full edit flow
+                room_id = data.get("room_id", bk["room_id"])
+                guest_id = data.get("guest_id", bk["guest_id"])
+                check_in_date = data.get("check_in_date", bk["check_in_date"])
+                check_out_date = data.get("check_out_date", bk["check_out_date"])
+                adults = int(data.get("adults", bk.get("adults", 1)))
+                children = int(data.get("children", bk.get("children", 0)))
+                advance = float(data.get("advance_payment", bk.get("advance_payment", 0.0)))
+                discount = float(data.get("discount", bk.get("discount", 0.0)))
+                new_status = data.get("status", bk["status"])
+                
+                try:
+                    from datetime import datetime
+                    cin = datetime.strptime(check_in_date, "%Y-%m-%d")
+                    cout = datetime.strptime(check_out_date, "%Y-%m-%d")
+                    nights = (cout - cin).days
+                    if nights < 1:
+                        conn.close()
+                        return api_error("Check-out date must be after check-in date.", 400)
+                except Exception:
+                    pass
+
+                # Check overlap for the new dates and potentially new room (excluding self)
+                if new_status in ["Confirmed", "Checked-in"]:
+                    overlap_query = """
+                    SELECT id, booking_code, check_in_date, check_out_date FROM bookings
+                    WHERE room_id = ? AND id != ?
+                      AND status IN ('Confirmed', 'Checked-in')
+                      AND NOT (check_out_date <= ? OR check_in_date >= ?)
+                    """
+                    cursor.execute(overlap_query, (room_id, booking_id, check_in_date, check_out_date))
+                    conflict = cursor.fetchone()
+                    if conflict:
+                        conn.close()
+                        return api_error(f"OVERLAP DETECTED! Room is reserved from {conflict['check_in_date']} to {conflict['check_out_date']}.", 409)
+
+                cursor.execute("SELECT price_per_night FROM rooms WHERE id = ?", (room_id,))
+                rm = cursor.fetchone()
+                room_price = float(rm["price_per_night"]) if rm else float(bk.get("room_price", 0.0))
+                subtotal = room_price * nights
+                tax_rate = 12.0
+                tax_amount = subtotal * (tax_rate / 100.0)
+                grand_total = subtotal + tax_amount - discount
+
+                # Restore old room status if changing rooms
+                if str(room_id) != str(bk["room_id"]) and bk["status"] in ["Confirmed", "Checked-in"]:
+                    cursor.execute("UPDATE rooms SET status = 'Available' WHERE id = ? AND status IN ('Reserved', 'Occupied')", (bk["room_id"],))
+
+                cursor.execute("""
+                UPDATE bookings SET 
+                    guest_id=?, room_id=?, check_in_date=?, check_out_date=?, 
+                    adults=?, children=?, advance_payment=?, discount=?, 
+                    room_price=?, tax_amount=?, grand_total=?, status=?
+                WHERE id = ?
+                """, (guest_id, room_id, check_in_date, check_out_date, adults, children, advance, discount, room_price, tax_amount, grand_total, new_status, booking_id))
+                
+                # Apply new status logic below
+
+            else:
+                # Status-only update flow
+                new_status = data.get("status", bk["status"])
+                cursor.execute("UPDATE bookings SET status = ? WHERE id = ?", (new_status, booking_id))
             
-            # Sync room status
+            # Sync room status for both full edit and status-only
             if new_status == "Cancelled":
                 cursor.execute("UPDATE rooms SET status = 'Available' WHERE id = ? AND status = 'Reserved'", (bk["room_id"],))
             elif new_status == "Checked-in":
-                cursor.execute("UPDATE rooms SET status = 'Occupied' WHERE id = ?", (bk["room_id"],))
+                cursor.execute("UPDATE rooms SET status = 'Occupied' WHERE id = ?", (bk.get("room_id", data.get("room_id", bk["room_id"])),))
             elif new_status == "Checked-out":
-                cursor.execute("UPDATE rooms SET status = 'Cleaning', housekeeping_status = 'Cleaning' WHERE id = ?", (bk["room_id"],))
+                cursor.execute("UPDATE rooms SET status = 'Cleaning', housekeeping_status = 'Cleaning' WHERE id = ?", (bk.get("room_id", data.get("room_id", bk["room_id"])),))
+            elif new_status == "Confirmed":
+                # Ensure reserved if available
+                cursor.execute("UPDATE rooms SET status = 'Reserved' WHERE id = ? AND status = 'Available'", (bk.get("room_id", data.get("room_id", bk["room_id"])),))
 
             conn.commit()
             conn.close()
-            return api_success(message=f"Booking status updated to {new_status}.")
+            return api_success(message=f"Booking updated successfully.")
     except Exception as e:
         traceback.print_exc()
         return api_error("Unable to update booking.", 500, error_detail=str(e))
@@ -670,13 +828,9 @@ def web_check_out():
 @app.route("/api/services", methods=["GET", "POST"])
 def handle_services():
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
         if request.method == "POST":
             user = get_auth_user()
             if not user or not check_permission(user.get("role"), "services"):
-                conn.close()
                 return api_error("Access denied.", 403)
 
             data = request.get_json() or {}
@@ -685,19 +839,23 @@ def handle_services():
             price = float(data.get("unit_price", 0.0))
 
             if not name:
-                conn.close()
                 return api_error("Service name is required.", 400)
 
+            conn = get_connection()
+            cursor = conn.cursor()
             cursor.execute("INSERT INTO services (service_name, category, unit_price) VALUES (?, ?, ?)", (name, category, price))
             conn.commit()
             conn.close()
             return api_success(message=f"Service '{name}' added.", status_code=201)
 
+        conn = get_connection()
+        cursor = conn.cursor()
         cursor.execute("SELECT * FROM services ORDER BY category ASC, service_name ASC")
         services = [dict(row) for row in cursor.fetchall()]
         conn.close()
         return api_success({"services": services})
     except Exception as e:
+        traceback.print_exc()
         return api_error("Unable to load services.", 500, error_detail=str(e))
 
 

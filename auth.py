@@ -85,6 +85,7 @@ def get_current_user(token):
             del LOCAL_SESSION_CACHE[token]
 
     # Validate against persistent database
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -92,14 +93,12 @@ def get_current_user(token):
         row = cursor.fetchone()
 
         if not row:
-            conn.close()
             return None
 
         expires_at = float(row["expires_at"])
         if now > expires_at:
             cursor.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
             conn.commit()
-            conn.close()
             return None
 
         session_data = {
@@ -110,7 +109,6 @@ def get_current_user(token):
             "token": row["token"],
             "expires_at": expires_at
         }
-        conn.close()
 
         # Cache locally
         LOCAL_SESSION_CACHE[token] = session_data
@@ -118,6 +116,9 @@ def get_current_user(token):
     except Exception as e:
         print(f"⚠️ [AUTH] Session validation error: {e}")
         return None
+    finally:
+        if conn:
+            conn.close()
 
 
 def check_permission(role, module):
