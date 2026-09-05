@@ -541,6 +541,22 @@ def init_db():
     )
     """)
 
+    # 12. Maintenance Logs Table
+    cursor.execute(f"""
+    CREATE TABLE IF NOT EXISTS maintenance_logs (
+        id {pk_serial},
+        room_number TEXT NOT NULL,
+        issue_category TEXT NOT NULL,
+        priority TEXT DEFAULT 'Medium',
+        description TEXT,
+        reported_by TEXT,
+        assigned_staff TEXT,
+        status TEXT DEFAULT 'Open',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP
+    )
+    """)
+
     conn.commit()
 
     # Seed Default Records safely if empty

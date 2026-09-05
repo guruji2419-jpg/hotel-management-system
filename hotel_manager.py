@@ -526,3 +526,139 @@ def display_dashboard(rooms=None):
     print(f"  📊 Occupancy Rate   : {stats['occupancy_rate']}%")
     print(f"  💰 Total Revenue    : ${stats['revenue']:.2f}")
     print("  " + "─" * 30)
+
+
+# ==========================================================================
+# ROOM MAINTENANCE MANAGEMENT
+# ==========================================================================
+def log_room_maintenance(room_number, issue_category, priority="Medium", description="", reported_by="Staff", assigned_staff=""):
+    """Logs a new maintenance issue and sets room status to Maintenance."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, status FROM rooms WHERE room_number = ?", (room_number,))
+    room = cursor.fetchone()
+    if not room:
+        conn.close()
+        return False, f"Room {room_number} does not exist.", None
+
+    if room["status"] == "Occupied":
+        conn.close()
+        return False, f"Room {room_number} is currently Occupied. Please relocate guest before setting maintenance.", None
+
+    cursor.execute("""
+    INSERT INTO maintenance_logs (room_number, issue_category, priority, description, reported_by, assigned_staff, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'Open')
+    """, (room_number, issue_category, priority, description, reported_by, assigned_staff))
+    log_id = cursor.lastrowid
+
+    # Update room status to Maintenance
+    cursor.execute("UPDATE rooms SET status = 'Maintenance', housekeeping_status = 'Maintenance' WHERE room_number = ?", (room_number,))
+
+    # Update housekeeping table
+    cursor.execute("""
+    INSERT INTO housekeeping (room_number, cleaning_status, assigned_staff, notes)
+    VALUES (?, 'Maintenance', ?, ?)
+    ON CONFLICT (room_number) DO UPDATE SET
+        cleaning_status = 'Maintenance',
+        assigned_staff = excluded.assigned_staff,
+        notes = excluded.notes,
+        last_updated = CURRENT_TIMESTAMP
+    """, (room_number, assigned_staff, f"Maintenance: {issue_category} - {description}"))
+
+    conn.commit()
+    conn.close()
+    return True, f"Room {room_number} logged under Maintenance (Log #{log_id}).", log_id
+
+
+def resolve_room_maintenance(log_id):
+    """Resolves a maintenance issue and restores room to Available / Clean."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, room_number, status FROM maintenance_logs WHERE id = ?", (log_id,))
+    log = cursor.fetchone()
+    if not log:
+        conn.close()
+        return False, f"Maintenance log #{log_id} not found."
+
+    room_number = log["room_number"]
+    cursor.execute("""
+    UPDATE maintenance_logs
+    SET status = 'Resolved', resolved_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+    """, (log_id,))
+
+    # Check if any other open/in-progress maintenance logs exist for this room
+    cursor.execute("SELECT id FROM maintenance_logs WHERE room_number = ? AND status IN ('Open', 'In Progress')", (room_number,))
+    remaining = cursor.fetchall()
+
+    if not remaining:
+        # Restore room to Available & Clean
+        cursor.execute("UPDATE rooms SET status = 'Available', housekeeping_status = 'Clean' WHERE room_number = ?", (room_number,))
+        cursor.execute("UPDATE housekeeping SET cleaning_status = 'Clean', last_updated = CURRENT_TIMESTAMP WHERE room_number = ?", (room_number,))
+
+    conn.commit()
+    conn.close()
+    return True, f"Maintenance log #{log_id} for Room {room_number} resolved successfully."
+
+
+def get_maintenance_logs(status_filter=None):
+    """Fetches list of maintenance logs."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if status_filter:
+        cursor.execute("SELECT * FROM maintenance_logs WHERE status = ? ORDER BY id DESC", (status_filter,))
+    else:
+        cursor.execute("SELECT * FROM maintenance_logs ORDER BY id DESC")
+    logs = cursor.fetchall()
+    conn.close()
+    return logs
+
+
+def display_maintenance_menu():
+    """CLI Menu option for managing maintenance."""
+    print_banner("Room Maintenance Management")
+    print("  1. 🔧 Log New Maintenance Issue")
+    print("  2. ✅ Resolve Maintenance Issue")
+    print("  3. 📋 View All Maintenance Logs")
+    choice = input("\n  Select option (1-3): ").strip()
+
+    if choice == "1":
+        r_num = input("  Room Number: ").strip()
+        category = input("  Category (Plumbing/Electrical/HVAC/Furniture/General): ").strip() or "General"
+        priority = input("  Priority (Low/Medium/High/Urgent) [Medium]: ").strip() or "Medium"
+        desc = input("  Description/Notes: ").strip()
+        staff = input("  Assigned Technician/Staff: ").strip()
+        success, msg, _ = log_room_maintenance(r_num, category, priority, desc, "CLI Admin", staff)
+        if success:
+            print(f"  ✅ {msg}")
+        else:
+            print(f"  ❌ {msg}")
+    elif choice == "2":
+        logs = get_maintenance_logs("Open") + get_maintenance_logs("In Progress")
+        if not logs:
+            print("  ℹ️ No active maintenance issues to resolve.")
+            return
+        print("\n  Active Maintenance Logs:")
+        for l in logs:
+            print(f"  [ID #{l['id']}] Room {l['room_number']} - {l['issue_category']} ({l['priority']}) Status: {l['status']}")
+        log_id = input("\n  Enter Log ID to resolve: ").strip()
+        try:
+            log_id_int = int(log_id)
+            success, msg = resolve_room_maintenance(log_id_int)
+            if success:
+                print(f"  ✅ {msg}")
+            else:
+                print(f"  ❌ {msg}")
+        except ValueError:
+            print("  ❌ Invalid Log ID.")
+    elif choice == "3":
+        logs = get_maintenance_logs()
+        if not logs:
+            print("  ℹ️ No maintenance logs recorded.")
+            return
+        print("\n  Maintenance Records:")
+        for l in logs:
+            print(f"  [#{l['id']}] Room {l['room_number']} | Cat: {l['issue_category']} | Priority: {l['priority']} | Status: {l['status']} | Logged: {l['created_at']}")
+

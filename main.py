@@ -11,7 +11,8 @@ from hotel_manager import (
     display_rooms,
     check_in_guest,
     check_out_guest,
-    display_dashboard
+    display_dashboard,
+    display_maintenance_menu
 )
 
 
@@ -24,7 +25,8 @@ def print_main_menu():
     print("║  2. 🛎️  Check-In Guest                     ║")
     print("║  3. 🧾 Check-Out Guest & Bill              ║")
     print("║  4. 📊 Hotel Dashboard & Stats             ║")
-    print("║  5. 🚪 Exit                                ║")
+    print("║  5. 🔧 Room Maintenance Management         ║")
+    print("║  6. 🚪 Exit                                ║")
     print("╚" + "═" * 44 + "╝")
 
 
@@ -37,7 +39,7 @@ def main():
     while True:
         try:
             print_main_menu()
-            choice = input("  Select an option (1-5): ").strip()
+            choice = input("  Select an option (1-6): ").strip()
             
             if choice == "1":
                 display_rooms(rooms)
@@ -48,10 +50,12 @@ def main():
             elif choice == "4":
                 display_dashboard(rooms)
             elif choice == "5":
+                display_maintenance_menu()
+            elif choice == "6":
                 print("\n  👋 Thank you for using Grand Horizon Hotel System. Goodbye!\n")
                 break
             else:
-                print("\n  ❌ Invalid choice! Please enter a number between 1 and 5.")
+                print("\n  ❌ Invalid choice! Please enter a number between 1 and 6.")
                 
         except (KeyboardInterrupt, EOFError):
             print("\n\n  👋 Program interrupted. Goodbye!")
