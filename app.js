@@ -256,6 +256,7 @@ function switchView(viewName) {
   if (viewName === "checkin")      loadCheckinView();
   if (viewName === "services")     loadServices();
   if (viewName === "housekeeping") loadHousekeeping();
+  if (viewName === "maintenance")  loadMaintenanceData();
   if (viewName === "reports")      loadReports();
   if (viewName === "users" && currentUser?.role === "Admin") loadUsers();
 }
@@ -266,6 +267,7 @@ function loadAllData() {
   loadGuests();
   loadRooms();
   loadHousekeeping();
+  loadMaintenanceData();
   loadServices();
 }
 
@@ -1566,6 +1568,209 @@ function renderHKTable(rooms) {
     `;
     tbody.appendChild(tr);
   });
+}
+
+// ==========================================================================
+// 12B. ROOM MAINTENANCE MANAGEMENT
+// ==========================================================================
+let allMaintenanceLogs = [];
+
+async function loadMaintenanceData(isBackground = false) {
+  const tbody = document.getElementById("table-maintenance");
+  if (tbody && !isBackground) renderTableSkeleton(tbody, 9, 3);
+
+  const statusFilter = document.getElementById("maint-filter-status")?.value || "";
+
+  try {
+    let url = "/api/maintenance";
+    if (statusFilter) url += `?status=${encodeURIComponent(statusFilter)}`;
+
+    const res = await fetch(url, {
+      headers: { "Authorization": `Bearer ${currentToken}` }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    if (data.success) {
+      allMaintenanceLogs = data.maintenance_logs || [];
+      renderMaintenanceTable(allMaintenanceLogs);
+      updateMaintenanceStats(data.stats, allMaintenanceLogs);
+    }
+  } catch (e) {
+    console.error("Maintenance error:", e);
+    if (tbody && !isBackground) {
+      tbody.innerHTML = `<tr><td colspan="9">
+        ${renderEmptyState(
+          `<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>`,
+          "Unable to Load Maintenance Logs",
+          "Could not retrieve maintenance records from server.",
+          `<button class="btn btn-secondary btn-sm" onclick="loadMaintenanceData()">🔄 Retry</button>`
+        )}
+      </td></tr>`;
+    }
+  }
+}
+
+function updateMaintenanceStats(stats, logs) {
+  const activeEl = document.getElementById("maint-stat-active");
+  const urgentEl = document.getElementById("maint-stat-urgent");
+  const resolvedEl = document.getElementById("maint-stat-resolved");
+  const badgeEl = document.getElementById("badge-maintenance-count");
+
+  const urgentCount = logs.filter(l => (l.priority === "Urgent" || l.priority === "High") && l.status !== "Resolved").length;
+
+  if (activeEl) activeEl.textContent = stats?.active || 0;
+  if (urgentEl) urgentEl.textContent = urgentCount;
+  if (resolvedEl) resolvedEl.textContent = stats?.resolved || 0;
+
+  if (badgeEl) {
+    const count = stats?.active || 0;
+    if (count > 0) {
+      badgeEl.textContent = count;
+      badgeEl.style.display = "inline-block";
+    } else {
+      badgeEl.style.display = "none";
+    }
+  }
+}
+
+function renderMaintenanceTable(logs) {
+  const tbody = document.getElementById("table-maintenance");
+  if (!tbody) return;
+
+  if (!logs || logs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9">
+      ${renderEmptyState(
+        `<svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.4-2.4c.4-.4.4-1 0-1.3z"/></svg>`,
+        "No Maintenance Work Orders",
+        "There are no room maintenance records matching the selected status."
+      )}
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = logs.map(l => {
+    let priorityBadge = `<span class="badge" style="background:#3498db;color:#fff;">Low</span>`;
+    if (l.priority === "Medium") priorityBadge = `<span class="badge" style="background:#f39c12;color:#fff;">Medium</span>`;
+    if (l.priority === "High") priorityBadge = `<span class="badge" style="background:#e67e22;color:#fff;">High</span>`;
+    if (l.priority === "Urgent") priorityBadge = `<span class="badge" style="background:#e74c3c;color:#fff;">Urgent</span>`;
+
+    let statusBadge = `<span class="badge" style="background:#e74c3c;color:#fff;">Open</span>`;
+    if (l.status === "In Progress") statusBadge = `<span class="badge" style="background:#f39c12;color:#fff;">In Progress</span>`;
+    if (l.status === "Resolved") statusBadge = `<span class="badge" style="background:#2ecc71;color:#fff;">Resolved</span>`;
+
+    let actionBtn = "";
+    if (l.status === "Open") {
+      actionBtn = `
+        <button class="btn btn-secondary btn-sm" onclick="updateMaintenanceStatus(${l.id}, 'In Progress')">▶️ Start Work</button>
+        <button class="btn btn-primary btn-sm" onclick="updateMaintenanceStatus(${l.id}, 'Resolved')">✅ Resolve</button>
+      `;
+    } else if (l.status === "In Progress") {
+      actionBtn = `
+        <button class="btn btn-primary btn-sm" onclick="updateMaintenanceStatus(${l.id}, 'Resolved')">✅ Resolve & Restore Room</button>
+      `;
+    } else {
+      actionBtn = `<span style="color:var(--text-muted);font-size:0.8rem;">Resolved ${l.resolved_at ? l.resolved_at.split('T')[0] : ''}</span>`;
+    }
+
+    return `
+      <tr>
+        <td><strong>#${l.id}</strong></td>
+        <td><strong style="color:var(--gold-400);">Room ${l.room_number}</strong></td>
+        <td>${l.issue_category}</td>
+        <td>${priorityBadge}</td>
+        <td><div style="max-width:250px;white-space:normal;font-size:0.85rem;">${escapeHTML(l.description || 'N/A')}</div></td>
+        <td>${escapeHTML(l.reported_by || 'Staff')}</td>
+        <td>${escapeHTML(l.assigned_staff || 'Unassigned')}</td>
+        <td>${statusBadge}</td>
+        <td><div style="display:flex;gap:6px;">${actionBtn}</div></td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function openMaintenanceModal(prefillRoom = "") {
+  const roomSelect = document.getElementById("maint-room-select");
+  if (roomSelect && typeof allRooms !== 'undefined' && allRooms) {
+    roomSelect.innerHTML = `<option value="">Select Room</option>` +
+      allRooms.map(r => `<option value="${r.room_number}" ${r.room_number === prefillRoom ? 'selected' : ''}>Room ${r.room_number} (${r.room_type} - ${r.status})</option>`).join("");
+  }
+  document.getElementById("form-log-maintenance")?.reset();
+  if (prefillRoom && roomSelect) roomSelect.value = prefillRoom;
+  openModal("modal-maintenance");
+}
+
+async function handleLogMaintenance(e) {
+  e.preventDefault();
+  const roomNum = document.getElementById("maint-room-select")?.value;
+  const category = document.getElementById("maint-category")?.value;
+  const priority = document.getElementById("maint-priority")?.value;
+  const assigned = document.getElementById("maint-assigned")?.value;
+  const description = document.getElementById("maint-description")?.value;
+
+  if (!roomNum || !category || !description) {
+    showToast("error", "Required Fields", "Please select room, category and provide issue description.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/maintenance", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${currentToken}`
+      },
+      body: JSON.stringify({
+        room_number: roomNum,
+        issue_category: category,
+        priority: priority,
+        assigned_staff: assigned,
+        description: description
+      })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      showToast("success", "Maintenance Logged", data.message || `Room ${roomNum} set to Maintenance.`);
+      closeModal("modal-maintenance");
+      loadMaintenanceData();
+      loadRooms();
+      loadHousekeeping();
+      loadDashboard();
+    } else {
+      showToast("error", "Log Failed", data.message || "Could not log maintenance issue.");
+    }
+  } catch (err) {
+    console.error(err);
+    showToast("error", "Server Error", "An error occurred while logging maintenance.");
+  }
+}
+
+async function updateMaintenanceStatus(id, status) {
+  try {
+    const res = await fetch("/api/maintenance", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${currentToken}`
+      },
+      body: JSON.stringify({ id, status })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      showToast("success", "Work Order Updated", data.message || `Maintenance status updated.`);
+      loadMaintenanceData();
+      loadRooms();
+      loadHousekeeping();
+      loadDashboard();
+    } else {
+      showToast("error", "Update Failed", data.message || "Could not update maintenance status.");
+    }
+  } catch (err) {
+    console.error(err);
+    showToast("error", "Server Error", "An error occurred while updating maintenance.");
+  }
 }
 
 // ==========================================================================

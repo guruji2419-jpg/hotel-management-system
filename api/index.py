@@ -29,7 +29,10 @@ from flask_cors import CORS
 
 from database import get_connection, hash_password, init_db, get_database_type
 from auth import authenticate_user, get_current_user, check_permission, logout_user
-from hotel_manager import load_rooms, api_check_in, api_check_out, api_get_stats
+from hotel_manager import (
+    load_rooms, api_check_in, api_check_out, api_get_stats,
+    log_room_maintenance, resolve_room_maintenance, get_maintenance_logs
+)
 
 # Ensure database tables are initialized
 try:
@@ -1064,7 +1067,108 @@ def handle_housekeeping():
 
 
 # ==========================================================================
-# 8. DASHBOARD & REPORTS ENDPOINTS
+# 8. MAINTENANCE ENDPOINTS
+# ==========================================================================
+
+@app.route("/api/maintenance", methods=["GET", "POST", "PUT"])
+def handle_maintenance():
+    try:
+        user = get_auth_user()
+        if not user:
+            return api_error("Authentication required.", 401)
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        if request.method == "POST":
+            data = request.get_json() or {}
+            r_num = str(data.get("room_number", "")).strip()
+            category = data.get("issue_category", "General")
+            priority = data.get("priority", "Medium")
+            desc = data.get("description", "")
+            assigned = data.get("assigned_staff", "")
+            reported_by = user.get("username", "Staff")
+
+            if not r_num:
+                conn.close()
+                return api_error("Room number is required.", 400)
+
+            success, msg, log_id = log_room_maintenance(r_num, category, priority, desc, reported_by, assigned)
+            conn.close()
+            if not success:
+                return api_error(msg, 400)
+            return api_success({"id": log_id}, message=msg)
+
+        elif request.method == "PUT":
+            data = request.get_json() or {}
+            log_id = data.get("id")
+            new_status = data.get("status")
+
+            if not log_id:
+                conn.close()
+                return api_error("Maintenance log ID is required.", 400)
+
+            if new_status == "Resolved":
+                success, msg = resolve_room_maintenance(log_id)
+                conn.close()
+                if not success:
+                    return api_error(msg, 400)
+                return api_success(message=msg)
+            else:
+                assigned = data.get("assigned_staff")
+                cursor.execute("""
+                UPDATE maintenance_logs
+                SET status = COALESCE(?, status),
+                    assigned_staff = COALESCE(?, assigned_staff),
+                    priority = COALESCE(?, priority)
+                WHERE id = ?
+                """, (new_status, assigned, data.get("priority"), log_id))
+                conn.commit()
+                conn.close()
+                return api_success(message="Maintenance log updated.")
+
+        else:
+            status_filter = request.args.get("status")
+            room_filter = request.args.get("room_number")
+
+            query = "SELECT * FROM maintenance_logs"
+            params = []
+            conditions = []
+            if status_filter:
+                conditions.append("status = ?")
+                params.append(status_filter)
+            if room_filter:
+                conditions.append("room_number = ?")
+                params.append(room_filter)
+
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY id DESC"
+
+            cursor.execute(query, params)
+            logs = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute("SELECT COUNT(*) as count FROM maintenance_logs WHERE status IN ('Open', 'In Progress')")
+            active_count = cursor.fetchone()["count"]
+            cursor.execute("SELECT COUNT(*) as count FROM maintenance_logs WHERE status = 'Resolved'")
+            resolved_count = cursor.fetchone()["count"]
+
+            conn.close()
+            return api_success({
+                "maintenance_logs": logs,
+                "stats": {
+                    "active": active_count,
+                    "resolved": resolved_count,
+                    "total": len(logs)
+                }
+            })
+    except Exception as e:
+        traceback.print_exc()
+        return api_error("Unable to process maintenance request.", 500, error_detail=str(e))
+
+
+# ==========================================================================
+# 9. DASHBOARD & REPORTS ENDPOINTS
 # ==========================================================================
 
 @app.route("/api/dashboard", methods=["GET"])

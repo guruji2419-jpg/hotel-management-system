@@ -166,6 +166,13 @@
           </button>
         </li>
         <li class="nav-item">
+          <button id="nav-maintenance" onclick="switchView('maintenance')">
+            <svg class="nav-icon" viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.4-2.4c.4-.4.4-1 0-1.3z"/></svg>
+            <span>Maintenance</span>
+            <span class="nav-badge" id="badge-maintenance-count" style="display:none; background: var(--status-maint, #e74c3c); color: white;">0</span>
+          </button>
+        </li>
+        <li class="nav-item">
           <button id="nav-reports" onclick="switchView('reports')">
             <svg class="nav-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
             <span>Reports &amp; Analytics</span>
@@ -800,6 +807,90 @@
       </section>
 
       <!-- ====================================================================
+           7B. MAINTENANCE VIEW
+           ==================================================================== -->
+      <section id="view-maintenance" class="view-section">
+        <div class="view-header">
+          <div class="view-header-title">
+            <div class="section-subtitle">Work Orders &amp; Room Repairs</div>
+            <h2>Room Maintenance Management</h2>
+            <p>Log, track, assign, and resolve room maintenance and repair issues</p>
+          </div>
+          <div class="view-header-actions">
+            <button class="btn btn-primary" onclick="openMaintenanceModal()">
+              <svg viewBox="0 0 24 24" style="width:16px;height:16px;margin-right:6px;fill:currentColor;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              Log Maintenance Issue
+            </button>
+          </div>
+        </div>
+
+        <!-- Maintenance Overview Stat Cards -->
+        <div class="dashboard-stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 24px;">
+          <div class="stat-card">
+            <div class="stat-card-header">
+              <span class="stat-card-title">Active Work Orders</span>
+              <div class="stat-card-icon" style="background: rgba(231,76,60,0.1); color: #e74c3c;">🔧</div>
+            </div>
+            <div class="stat-card-value" id="maint-stat-active">0</div>
+            <div class="stat-card-foot">Pending resolution</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-header">
+              <span class="stat-card-title">Urgent / High Priority</span>
+              <div class="stat-card-icon" style="background: rgba(243,156,18,0.1); color: #f39c12;">⚠️</div>
+            </div>
+            <div class="stat-card-value" id="maint-stat-urgent">0</div>
+            <div class="stat-card-foot">Requires immediate attention</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-header">
+              <span class="stat-card-title">Resolved Issues</span>
+              <div class="stat-card-icon" style="background: rgba(46,204,113,0.1); color: #2ecc71;">✅</div>
+            </div>
+            <div class="stat-card-value" id="maint-stat-resolved">0</div>
+            <div class="stat-card-foot">Completed work orders</div>
+          </div>
+        </div>
+
+        <!-- Maintenance Logs Filter & Table -->
+        <div class="view-header" style="margin-top:24px;">
+          <div class="view-header-title">
+            <div class="section-subtitle">Work Order Logs</div>
+            <h3>Maintenance Records &amp; Log History</h3>
+          </div>
+          <div style="display:flex; gap:12px; align-items:center;">
+            <select id="maint-filter-status" class="form-control" style="width: auto;" onchange="loadMaintenanceData()">
+              <option value="">All Statuses</option>
+              <option value="Open">Open</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Resolved">Resolved</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-luxury-wrap">
+          <table class="table-luxury">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Room</th>
+                <th>Category</th>
+                <th>Priority</th>
+                <th>Description</th>
+                <th>Reported By</th>
+                <th>Assigned Staff</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="table-maintenance">
+              <tr><td colspan="9"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading maintenance records…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ====================================================================
            8. REPORTS & ANALYTICS VIEW
            ==================================================================== -->
       <section id="view-reports" class="view-section">
@@ -1293,6 +1384,62 @@
     </div>
     <div class="drawer-body" id="drawer-room-body">
       <!-- Filled dynamically -->
+    </div>
+  </div>
+</div>
+
+<!-- 11. Log Maintenance Modal -->
+<div class="modal-backdrop" id="modal-maintenance" onclick="closeModalOnBackdrop(event, 'modal-maintenance')">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>🔧 Log Room Maintenance Issue</h3>
+      <button class="modal-close-btn" onclick="closeModal('modal-maintenance')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-log-maintenance" onsubmit="handleLogMaintenance(event)">
+        <div class="form-row" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+          <div class="form-group">
+            <label class="form-label" style="display:block; margin-bottom:6px; font-weight:600;">Room Number *</label>
+            <select id="maint-room-select" class="form-control" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;" required>
+              <option value="">Select Room</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display:block; margin-bottom:6px; font-weight:600;">Issue Category *</label>
+            <select id="maint-category" class="form-control" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;" required>
+              <option value="General">General Maintenance</option>
+              <option value="Plumbing">Plumbing / Leakage</option>
+              <option value="Electrical">Electrical / Lighting</option>
+              <option value="HVAC">AC / Heating / HVAC</option>
+              <option value="Furniture">Furniture / Fixtures</option>
+              <option value="Electronics">TV / Electronics / Wi-Fi</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row" style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+          <div class="form-group">
+            <label class="form-label" style="display:block; margin-bottom:6px; font-weight:600;">Priority Level</label>
+            <select id="maint-priority" class="form-control" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+              <option value="Urgent">Urgent</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="display:block; margin-bottom:6px; font-weight:600;">Assigned Staff / Technician</label>
+            <input type="text" id="maint-assigned" class="form-control" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;" placeholder="e.g. John (Electrician)">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:20px;">
+          <label class="form-label" style="display:block; margin-bottom:6px; font-weight:600;">Issue Description &amp; Notes *</label>
+          <textarea id="maint-description" class="form-control" style="width:100%; padding:10px; border-radius:6px; border:1px solid #ccc;" rows="3" placeholder="Describe the issue, required tools, or notes..." required></textarea>
+        </div>
+        <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:12px; margin-top:20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modal-maintenance')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Log Issue &amp; Set Room to Maintenance</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
