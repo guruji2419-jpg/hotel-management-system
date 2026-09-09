@@ -157,18 +157,28 @@ class UnifiedCursor:
         if self._db_type == "POSTGRESQL":
             is_insert = translated.strip().upper().startswith("INSERT")
             has_returning = "RETURNING" in translated.upper()
+            is_user_sessions = bool(re.search(r'INSERT\s+INTO\s+["\']?user_sessions["\']?', translated, re.IGNORECASE))
             
-            if is_insert and not has_returning and "ON CONFLICT DO NOTHING" not in translated.upper():
+            if is_insert and not has_returning and "ON CONFLICT DO NOTHING" not in translated.upper() and not is_user_sessions:
                 try_query = translated.rstrip("; ") + " RETURNING id"
+                if self._parent_conn:
+                    self._parent_conn._ensure_trans()
+                savepoint = None
                 try:
+                    savepoint = self._conn.begin_nested()
                     self._results = self._conn.execute(text(try_query), params_dict)
                     row = self._results.fetchone()
                     if row:
                         self.lastrowid = getattr(row, "id", None) or row[0]
                     self.rowcount = self._results.rowcount
+                    savepoint.commit()
                     return self
                 except Exception:
-                    pass
+                    if savepoint is not None:
+                        try:
+                            savepoint.rollback()
+                        except Exception:
+                            pass
         
         # Ensure transaction is active for modifying statements
         is_modifying = translated.strip().upper().startswith(("INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER"))
@@ -234,11 +244,17 @@ class UnifiedConnection:
         self._trans = None
 
     def _ensure_trans(self):
-        if self._trans is None and not self._sa_conn.in_transaction():
-            try:
-                self._trans = self._sa_conn.begin()
-            except Exception:
-                pass
+        if self._trans is None:
+            if not self._sa_conn.in_transaction():
+                try:
+                    self._trans = self._sa_conn.begin()
+                except Exception:
+                    pass
+            else:
+                try:
+                    self._trans = self._sa_conn.get_transaction()
+                except Exception:
+                    pass
 
     def cursor(self):
         return UnifiedCursor(self._sa_conn, self._db_type, self)
@@ -453,7 +469,10 @@ def init_db():
     # Safe migrations for existing databases
     for col, ctype in [("room_price", real_type), ("tax_amount", real_type), ("discount", real_type), ("grand_total", real_type)]:
         try:
-            cursor.execute(f"ALTER TABLE bookings ADD COLUMN {col} {ctype} DEFAULT 0.0")
+            if db_type == "POSTGRESQL":
+                cursor.execute(f"ALTER TABLE bookings ADD COLUMN IF NOT EXISTS {col} {ctype} DEFAULT 0.0")
+            else:
+                cursor.execute(f"ALTER TABLE bookings ADD COLUMN {col} {ctype} DEFAULT 0.0")
         except Exception:
             pass
 

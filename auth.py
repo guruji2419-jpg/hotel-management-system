@@ -17,9 +17,37 @@ LOCAL_SESSION_CACHE = {}
 ROLE_PERMISSIONS = {
     "Admin": ["dashboard", "guests", "rooms", "bookings", "checkin", "checkout", "billing", "services", "housekeeping", "reports", "users"],
     "Manager": ["dashboard", "guests", "rooms", "bookings", "checkin", "checkout", "billing", "services", "housekeeping", "reports"],
-    "Receptionist": ["dashboard", "guests", "bookings", "checkin", "checkout", "billing", "services"],
+    "Receptionist": ["dashboard", "guests", "rooms", "bookings", "checkin", "checkout", "billing", "services", "housekeeping", "reports"],
     "Housekeeping": ["dashboard", "housekeeping", "rooms"]
 }
+
+ROLE_ALIASES = {
+    "admin": "Admin",
+    "manager": "Manager",
+    "receptionist": "Receptionist",
+    "reception": "Receptionist",
+    "frontdesk": "Receptionist",
+    "housekeeping": "Housekeeping",
+    "cleaner": "Housekeeping",
+    "staff": "Housekeeping",
+}
+
+
+def normalize_role(role):
+    """Normalizes role strings across case variations and common aliases."""
+    if not role:
+        return None
+    r = str(role).strip()
+    if r in ROLE_PERMISSIONS:
+        return r
+    lower = r.lower()
+    if lower in ROLE_ALIASES:
+        return ROLE_ALIASES[lower]
+    title = r.title()
+    if title in ROLE_PERMISSIONS:
+        return title
+    return r
+
 
 
 def authenticate_user(username, password):
@@ -122,10 +150,16 @@ def get_current_user(token):
 
 
 def check_permission(role, module):
-    """Checks if a given role is authorized to access a module."""
-    if not role or role not in ROLE_PERMISSIONS:
+    """Checks if a given role is authorized to access a module with case and alias tolerance."""
+    norm_role = normalize_role(role)
+    if not norm_role or norm_role not in ROLE_PERMISSIONS:
         return False
-    return module in ROLE_PERMISSIONS[role]
+    if norm_role == "Admin":
+        return True
+    mod = str(module).strip().lower()
+    allowed_modules = [m.lower() for m in ROLE_PERMISSIONS[norm_role]]
+    return mod in allowed_modules
+
 
 
 def logout_user(token):

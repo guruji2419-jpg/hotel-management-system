@@ -211,6 +211,24 @@ class GrandHorizonEnterpriseTestSuite(unittest.TestCase):
         self.assertEqual(data_get["guest"]["full_name"], "Lord Sterling Archer")
         self.assertIn("bookings", data_get)
         self.assertIn("payments", data_get)
+
+        # Update guest details (Guest Edit)
+        update_payload = {
+            "full_name": "Lord Sterling Archer CBE",
+            "phone": "9876543211",
+            "city": "Monaco"
+        }
+        res_put = self.client.put(f"/api/guests/{guest_id}", data=json.dumps(update_payload), headers=headers)
+        self.assertEqual(res_put.status_code, 200)
+
+        # Verify updated guest details and that COALESCE preserved unedited fields
+        res_get2 = self.client.get(f"/api/guests/{guest_id}", headers=headers)
+        self.assertEqual(res_get2.status_code, 200)
+        data_get2 = json.loads(res_get2.data)
+        self.assertEqual(data_get2["guest"]["full_name"], "Lord Sterling Archer CBE")
+        self.assertEqual(data_get2["guest"]["city"], "Monaco")
+        self.assertEqual(data_get2["guest"]["email"], "sterling@grandhorizon.com")
+        self.assertEqual(data_get2["guest"]["country"], "United Kingdom")
         print("  ✓ Guest CRUD & portfolio history verification passed.")
 
     def test_06_dashboard_statistics(self):
@@ -245,6 +263,78 @@ class GrandHorizonEnterpriseTestSuite(unittest.TestCase):
         self.assertIn("INSERT INTO housekeeping", t3)
         self.assertIn("ON CONFLICT DO NOTHING", t3)
         print("  ✓ PostgreSQL parameter translation and query engine verified.")
+
+    def test_08_room_crud_edit_and_delete(self):
+        """Test room creation, editing (PUT), and deletion (DELETE)."""
+        # Clean up any leftover room 901
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM housekeeping WHERE room_number = '901'")
+        cur.execute("DELETE FROM rooms WHERE room_number = '901'")
+        conn.commit()
+        conn.close()
+
+        success, msg, session = authenticate_user("admin", "admin123")
+        token = session["token"]
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # 1. Create a new room 901
+        room_payload = {
+            "room_number": "901",
+            "floor": 9,
+            "room_type": "Executive",
+            "bed_type": "King",
+            "capacity": 3,
+            "price_per_night": 450.0,
+            "amenities": "Private Terrace, Jacuzzi, Butler Service"
+        }
+        res_post = self.client.post("/api/rooms", data=json.dumps(room_payload), headers=headers)
+        self.assertEqual(res_post.status_code, 201)
+
+        # Get room id
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM rooms WHERE room_number = '901'")
+        r_row = cur.fetchone()
+        conn.close()
+        self.assertIsNotNone(r_row)
+        room_id = r_row["id"]
+
+        # 2. Edit room 901 (PUT)
+        edit_payload = {
+            "price_per_night": 495.0,
+            "room_type": "Presidential Suite",
+            "amenities": "Private Terrace, Jacuzzi, Butler Service, Helipad Access"
+        }
+        res_put = self.client.put(f"/api/rooms/{room_id}", data=json.dumps(edit_payload), headers=headers)
+        self.assertEqual(res_put.status_code, 200)
+
+        # Verify edited room
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT price_per_night, room_type, amenities, floor FROM rooms WHERE id = ?", (room_id,))
+        updated_room = cur.fetchone()
+        conn.close()
+        self.assertEqual(float(updated_room["price_per_night"]), 495.0)
+        self.assertEqual(updated_room["room_type"], "Presidential Suite")
+        self.assertEqual(updated_room["floor"], 9)
+        print("  ✓ Room 901 created and edited (PUT).")
+
+        # 3. Delete room 901 (DELETE)
+        res_del = self.client.delete(f"/api/rooms/{room_id}", headers=headers)
+        self.assertEqual(res_del.status_code, 200)
+
+        # Verify deletion
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM rooms WHERE id = ?", (room_id,))
+        deleted_row = cur.fetchone()
+        cur.execute("SELECT id FROM housekeeping WHERE room_number = '901'")
+        deleted_hk = cur.fetchone()
+        conn.close()
+        self.assertIsNone(deleted_row)
+        self.assertIsNone(deleted_hk)
+        print("  ✓ Room 901 deleted (DELETE) and housekeeping synchronized.")
 
 
 if __name__ == "__main__":
