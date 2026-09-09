@@ -90,7 +90,57 @@ def run_live_tests():
     guest_id = g_res["guest_id"]
     print(f"  ✓ [201 Created] Guest '{guest_data['full_name']}' created (ID: {guest_id})")
 
-    # 7. Booking & Overlap Test
+    # 7. Guest Profile Update (Guest Edit)
+    guest_update_data = {
+        "full_name": "Duchess Amelia Claremont-Windsor",
+        "city": "Cambridge",
+        "phone": "9988776699"
+    }
+    status, g_upd_res = make_request(f"/api/guests/{guest_id}", method="PUT", data=guest_update_data, token=token)
+    assert status == 200 and g_upd_res["success"], f"Guest update failed: {g_upd_res}"
+    print(f"  ✓ [200 OK] Guest profile updated (PUT /api/guests/{guest_id})")
+
+    # Verify updated guest
+    status, g_get_res = make_request(f"/api/guests/{guest_id}", token=token)
+    assert status == 200 and g_get_res["guest"]["full_name"] == "Duchess Amelia Claremont-Windsor", "Guest verify failed"
+    assert g_get_res["guest"]["country"] == "United Kingdom", "COALESCE failed to preserve country"
+    print("  ✓ [200 OK] Guest update verified with preserved fields")
+
+    # 8. Room Add, Edit, and Delete Lifecycle
+    new_room_data = {
+        "room_number": "888",
+        "floor": 8,
+        "room_type": "Penthouse",
+        "bed_type": "King",
+        "capacity": 4,
+        "price_per_night": 750.0,
+        "amenities": "Panoramic View, Sauna, Butler"
+    }
+    status, r_add_res = make_request("/api/rooms", method="POST", data=new_room_data, token=token)
+    assert status in [201, 400], f"Room add response: {r_add_res}"
+
+    # Find room 888 ID
+    status, all_rooms_res = make_request("/api/rooms", token=token)
+    r888 = next((r for r in all_rooms_res["list"] if str(r["room_number"]) == "888"), None)
+    assert r888 is not None, "Room 888 not found in directory"
+    r888_id = r888["id"]
+    print("  ✓ [201 Created] Room 888 added to property inventory")
+
+    # Edit room 888
+    r_edit_data = {
+        "price_per_night": 850.0,
+        "amenities": "Panoramic View, Sauna, Butler, Private Pool"
+    }
+    status, r_edit_res = make_request(f"/api/rooms/{r888_id}", method="PUT", data=r_edit_data, token=token)
+    assert status == 200 and r_edit_res["success"], f"Room edit failed: {r_edit_res}"
+    print(f"  ✓ [200 OK] Room 888 updated (PUT /api/rooms/{r888_id})")
+
+    # Delete room 888
+    status, r_del_res = make_request(f"/api/rooms/{r888_id}", method="DELETE", token=token)
+    assert status == 200 and r_del_res["success"], f"Room delete failed: {r_del_res}"
+    print(f"  ✓ [200 OK] Room 888 deleted (DELETE /api/rooms/{r888_id})")
+
+    # 9. Booking & Overlap Test
     b1_data = {
         "guest_id": guest_id,
         "room_id": 4, # Room 201
@@ -115,7 +165,7 @@ def run_live_tests():
     assert status == 409, f"Expected 409 for overlap, got {status}: {b2_res}"
     print("  ✓ [409 Conflict] Overlap detection correctly rejected duplicate reservation")
 
-    # 8. Housekeeping
+    # 10. Housekeeping
     hk_data = {
         "room_number": "103",
         "cleaning_status": "Clean",
@@ -125,7 +175,7 @@ def run_live_tests():
     assert status == 200, f"Housekeeping update failed: {status}"
     print("  ✓ [200 OK] Housekeeping state updated")
 
-    # 9. CSV Export
+    # 11. CSV Export
     status, csv_res = make_request("/api/reports/export/csv?type=guests", token=token)
     assert status == 200 and "Full Name" in csv_res, "CSV export failed"
     print("  ✓ [200 OK] Reports CSV generated")

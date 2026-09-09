@@ -745,10 +745,11 @@
                 <th>Service Offering</th>
                 <th>Category</th>
                 <th>Unit Price</th>
+                <th style="text-align:center;">Actions</th>
               </tr>
             </thead>
             <tbody id="table-services">
-              <tr><td colspan="4"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading services catalog…</div></td></tr>
+              <tr><td colspan="5"><div style="text-align:center;padding:30px;color:var(--text-muted);">Loading services catalog…</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -810,13 +811,21 @@
             <p>Operational yield, occupancy metrics, and CSV reporting downloads</p>
           </div>
           <div class="view-header-actions">
-            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('guests')">
+            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('revenue')">
               <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              Export Guests CSV
+              Revenue CSV
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('occupancy')">
+              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              Occupancy CSV
             </button>
             <button class="btn btn-secondary btn-sm" onclick="downloadCSV('bookings')">
               <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-              Export Bookings CSV
+              Bookings CSV
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadCSV('guests')">
+              <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              Guests CSV
             </button>
           </div>
         </div>

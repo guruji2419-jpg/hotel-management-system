@@ -242,6 +242,12 @@ def api_check_out(rooms, query, services_charge=0.0):
     except (ValueError, TypeError):
         services_charge = 0.0
 
+    # Include any services already attached to the booking in booking_services
+    cursor.execute("SELECT COALESCE(SUM(total_price), 0.0) as svc_total FROM booking_services WHERE booking_id = ?", (target["booking_id"],))
+    svc_row = cursor.fetchone()
+    attached_services = float(svc_row["svc_total"] if isinstance(svc_row, dict) else svc_row[0]) if svc_row and (svc_row["svc_total"] if isinstance(svc_row, dict) else svc_row[0]) else 0.0
+    services_charge = services_charge + attached_services
+
     try:
         from datetime import datetime
         cin = datetime.strptime(target["check_in_date"], "%Y-%m-%d")
@@ -298,14 +304,21 @@ def api_check_out(rooms, query, services_charge=0.0):
     inv_num = f"INV-{target['room_number']}-{secrets.token_hex(3).upper()}"
     cursor.execute("""
     INSERT INTO invoices (invoice_number, booking_id, guest_id, room_id, room_charges, service_charges, discount, tax_rate, tax_amount, grand_total, advance_paid, amount_paid, balance_due, payment_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Paid')
-    """, (inv_num, target["booking_id"], target["guest_id"], target["room_id"], room_charge, services_charge, discount, tax_rate, tax_amount, grand_total, advance_paid, grand_total, balance_due))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 'Paid')
+    """, (inv_num, target["booking_id"], target["guest_id"], target["room_id"], room_charge, services_charge, discount, tax_rate, tax_amount, grand_total, advance_paid, grand_total))
 
-    # Record Payment
-    cursor.execute("""
-    INSERT INTO payments (invoice_number, booking_id, amount, payment_method)
-    VALUES (?, ?, ?, 'Cash / Direct')
-    """, (inv_num, target["booking_id"], grand_total))
+    # Record Payments
+    actual_paid_now = balance_due
+    if actual_paid_now > 0:
+        cursor.execute("""
+        INSERT INTO payments (invoice_number, booking_id, amount, payment_method)
+        VALUES (?, ?, ?, 'Cash / Direct')
+        """, (inv_num, target["booking_id"], actual_paid_now))
+    if advance_paid > 0:
+        cursor.execute("""
+        INSERT INTO payments (invoice_number, booking_id, amount, payment_method, transaction_ref)
+        VALUES (?, ?, ?, 'Advance Payment', 'ADVANCE')
+        """, (inv_num, target["booking_id"], advance_paid))
 
     conn.commit()
     conn.close()
@@ -378,7 +391,7 @@ def api_get_stats(rooms=None):
     current_stays = cur_stays_row[0] if cur_stays_row else 0
     
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
-    cursor.execute("SELECT COUNT(*) FROM audit_logs WHERE timestamp >= ?", (today_start,))
+    cursor.execute('SELECT COUNT(*) FROM audit_logs WHERE "timestamp" >= ?', (today_start,))
     act_row = cursor.fetchone()
     daily_activity = act_row[0] if act_row else 0
 

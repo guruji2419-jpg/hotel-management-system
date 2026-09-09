@@ -28,7 +28,7 @@ from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 
 from database import get_connection, hash_password, init_db, get_database_type
-from auth import authenticate_user, get_current_user, check_permission, logout_user
+from auth import authenticate_user, get_current_user, check_permission, logout_user, normalize_role
 from hotel_manager import load_rooms, api_check_in, api_check_out, api_get_stats
 
 # Ensure database tables are initialized
@@ -46,14 +46,29 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 # HELPER FUNCTIONS & RESPONSE STANDARDIZATION
 # ==========================================================================
 
-def get_auth_user():
-    """Extracts and validates user from Bearer header or query token."""
-    auth_header = request.headers.get("Authorization", "")
+def extract_auth_token():
+    """Safely extracts authorization token from headers or query parameters."""
+    auth_header = request.headers.get("Authorization", "").strip()
     token = ""
-    if auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
-    elif "token" in request.args:
-        token = request.args.get("token")
+    if auth_header:
+        parts = auth_header.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1].strip()
+        elif len(parts) == 1:
+            token = parts[0].strip()
+
+    if not token:
+        token = request.headers.get("X-Auth-Token", "").strip() or request.headers.get("X-Session-Token", "").strip()
+
+    if not token and "token" in request.args:
+        token = request.args.get("token", "").strip()
+
+    return token
+
+
+def get_auth_user():
+    """Extracts and validates user from Bearer header, custom token headers, or query token."""
+    token = extract_auth_token()
     return get_current_user(token)
 
 
@@ -138,9 +153,9 @@ def get_me():
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
     try:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            logout_user(auth_header.split(" ")[1])
+        token = extract_auth_token()
+        if token:
+            logout_user(token)
         return api_success(message="Logged out successfully.")
     except Exception as e:
         return api_error("Logout failed.", 500, error_detail=str(e))
@@ -150,7 +165,7 @@ def logout():
 def manage_users():
     try:
         user = get_auth_user()
-        if not user or user.get("role") != "Admin":
+        if not user or normalize_role(user.get("role")) != "Admin":
             return api_error("Admin authorization required.", 403)
 
         conn = get_connection()
@@ -275,13 +290,14 @@ def handle_single_guest(guest_id):
         cursor = conn.cursor()
 
         if request.method == "DELETE":
-            if user.get("role") not in ["Admin", "Manager"]:
+            if normalize_role(user.get("role")) not in ["Admin", "Manager", "Receptionist"]:
                 conn.close()
-                return api_error("Delete permission denied. Admin or Manager role required.", 403)
+                return api_error("Delete permission denied. Admin, Manager, or Receptionist role required.", 403)
             # Prevent deletion if guest has active bookings
-            cursor.execute("SELECT COUNT(*) as cnt FROM bookings WHERE guest_id = ? AND status IN ('Reserved', 'Checked-in')", (guest_id,))
+            cursor.execute("SELECT COUNT(*) as cnt FROM bookings WHERE guest_id = ? AND status IN ('Confirmed', 'Checked-in', 'Reserved')", (guest_id,))
             active_b = cursor.fetchone()
-            if active_b and active_b["cnt"] > 0:
+            cnt = (active_b["cnt"] if isinstance(active_b, dict) else active_b[0]) if active_b else 0
+            if cnt > 0:
                 conn.close()
                 return api_error("Cannot delete guest with active reservations or check-ins.", 400)
             cursor.execute("DELETE FROM guests WHERE id = ?", (guest_id,))
@@ -360,8 +376,8 @@ def handle_rooms():
     try:
         if request.method == "POST":
             user = get_auth_user()
-            if not user or not check_permission(user.get("role"), "rooms"):
-                return api_error("Access denied.", 403)
+            if not user or normalize_role(user.get("role")) not in ["Admin", "Manager"]:
+                return api_error("Access denied. Admin or Manager role required to create rooms.", 403)
 
             data = request.get_json() or {}
             r_num = data.get("room_number", "").strip()
@@ -456,7 +472,7 @@ def handle_single_room(room_id):
         cursor = conn.cursor()
 
         if request.method == "DELETE":
-            if user.get("role") not in ["Admin", "Manager"]:
+            if normalize_role(user.get("role")) not in ["Admin", "Manager"]:
                 conn.close()
                 return api_error("Delete permission denied. Admin or Manager role required.", 403)
 
@@ -468,6 +484,13 @@ def handle_single_room(room_id):
             if r_check["status"] == "Occupied":
                 conn.close()
                 return api_error(f"Cannot delete Room {r_check['room_number']} because it is currently Occupied.", 400)
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM bookings WHERE room_id = ? AND status IN ('Confirmed', 'Checked-in')", (room_id,))
+            b_active = cursor.fetchone()
+            cnt = (b_active["cnt"] if isinstance(b_active, dict) else b_active[0]) if b_active else 0
+            if cnt > 0:
+                conn.close()
+                return api_error(f"Cannot delete Room {r_check['room_number']}: Active or upcoming reservations exist.", 400)
 
             # Clean up associated housekeeping record
             cursor.execute("DELETE FROM housekeeping WHERE room_number = ?", (r_check["room_number"],))
@@ -571,6 +594,13 @@ def handle_bookings():
                 conn.close()
                 return api_error("Guest, Room, Check-in and Check-out dates are required.", 400)
 
+            try:
+                guest_id = int(guest_id)
+                room_id = int(room_id)
+            except (ValueError, TypeError):
+                conn.close()
+                return api_error("Invalid guest_id or room_id.", 400)
+
             # Date calculation
             try:
                 from datetime import datetime
@@ -666,13 +696,25 @@ def handle_single_booking(booking_id):
         if request.method == "DELETE":
             cursor.execute("SELECT room_id, status FROM bookings WHERE id = ?", (booking_id,))
             bk = cursor.fetchone()
-            if bk:
+            if not bk:
+                conn.close()
+                return api_error("Booking not found.", 404)
+
+            if request.args.get("permanent") == "true":
+                if bk["status"] not in ["Cancelled"]:
+                    conn.close()
+                    return api_error("Only Cancelled bookings can be permanently deleted.", 400)
+                cursor.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
+                conn.commit()
+                conn.close()
+                return api_success(message="Reservation record permanently deleted.")
+            else:
                 cursor.execute("UPDATE bookings SET status = 'Cancelled' WHERE id = ?", (booking_id,))
                 if bk["status"] in ["Confirmed", "Checked-in"]:
                     cursor.execute("UPDATE rooms SET status = 'Available' WHERE id = ? AND status IN ('Reserved', 'Occupied')", (bk["room_id"],))
                 conn.commit()
-            conn.close()
-            return api_success(message="Reservation cancelled.")
+                conn.close()
+                return api_success(message="Reservation cancelled.")
 
         if request.method == "PUT":
             data = request.get_json() or {}
@@ -869,12 +911,17 @@ def add_service_to_booking():
         data = request.get_json() or {}
         booking_id = data.get("booking_id")
         service_name = data.get("service_name")
-        quantity = int(data.get("quantity", 1))
-        unit_price = float(data.get("unit_price", 0.0))
-        total_price = quantity * unit_price
 
         if not booking_id or not service_name:
             return api_error("Booking ID and Service Name are required.", 400)
+
+        try:
+            booking_id = int(booking_id)
+            quantity = int(data.get("quantity", 1))
+            unit_price = float(data.get("unit_price", 0.0))
+            total_price = quantity * unit_price
+        except (ValueError, TypeError):
+            return api_error("Invalid booking_id, quantity, or unit_price.", 400)
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -888,6 +935,54 @@ def add_service_to_booking():
         return api_success(message=f"Added ${total_price:.2f} for {service_name}.")
     except Exception as e:
         return api_error("Unable to add service to booking.", 500, error_detail=str(e))
+
+
+@app.route("/api/services/<int:service_id>", methods=["DELETE"])
+def delete_service_item(service_id):
+    try:
+        user = get_auth_user()
+        if not user or not check_permission(user.get("role"), "services"):
+            return api_error("Access denied.", 403)
+        if normalize_role(user.get("role")) not in ["Admin", "Manager"]:
+            return api_error("Admin or Manager role required to remove services.", 403)
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, service_name FROM services WHERE id = ?", (service_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return api_error("Service not found.", 404)
+
+        cursor.execute("DELETE FROM services WHERE id = ?", (service_id,))
+        conn.commit()
+        conn.close()
+        return api_success(message=f"Service '{row['service_name']}' removed from catalog.")
+    except Exception as e:
+        return api_error("Unable to remove service.", 500, error_detail=str(e))
+
+
+@app.route("/api/services/booking-service/<int:item_id>", methods=["DELETE"])
+def remove_booking_service(item_id):
+    try:
+        user = get_auth_user()
+        if not user or not check_permission(user.get("role"), "services"):
+            return api_error("Access denied.", 403)
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, service_name, total_price FROM booking_services WHERE id = ?", (item_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return api_error("Booking service item not found.", 404)
+
+        cursor.execute("DELETE FROM booking_services WHERE id = ?", (item_id,))
+        conn.commit()
+        conn.close()
+        return api_success(message=f"Removed service '{row['service_name']}' (${row['total_price']:.2f}) from booking.")
+    except Exception as e:
+        return api_error("Unable to remove service charge.", 500, error_detail=str(e))
 
 
 @app.route("/api/invoices/<invoice_id>", methods=["GET"])
@@ -994,7 +1089,7 @@ def handle_payments():
 # 8. HOUSEKEEPING ENDPOINTS
 # ==========================================================================
 
-@app.route("/api/housekeeping", methods=["GET", "PUT"])
+@app.route("/api/housekeeping", methods=["GET", "POST", "PUT"])
 def handle_housekeeping():
     try:
         user = get_auth_user()
@@ -1004,7 +1099,7 @@ def handle_housekeeping():
         conn = get_connection()
         cursor = conn.cursor()
 
-        if request.method == "PUT":
+        if request.method in ["PUT", "POST"]:
             data = request.get_json() or {}
             r_num = str(data.get("room_number", "")).strip()
             status = data.get("cleaning_status", "Clean")
@@ -1016,14 +1111,14 @@ def handle_housekeeping():
                 return api_error("Room number is required.", 400)
 
             # Synchronize room status with housekeeping status
-            if status == "Clean":
+            if status in ["Clean", "Inspected"]:
                 # If room was in Cleaning or Maintenance, transition to Available (unless active booking)
                 cursor.execute("SELECT status FROM rooms WHERE room_number = ?", (r_num,))
                 curr_room = cursor.fetchone()
                 if curr_room and curr_room["status"] in ["Cleaning", "Maintenance"]:
-                    cursor.execute("UPDATE rooms SET status = 'Available', housekeeping_status = 'Clean' WHERE room_number = ?", (r_num,))
+                    cursor.execute("UPDATE rooms SET status = 'Available', housekeeping_status = ? WHERE room_number = ?", (status, r_num))
                 else:
-                    cursor.execute("UPDATE rooms SET housekeeping_status = 'Clean' WHERE room_number = ?", (r_num,))
+                    cursor.execute("UPDATE rooms SET housekeeping_status = ? WHERE room_number = ?", (status, r_num))
             elif status == "Maintenance":
                 cursor.execute("UPDATE rooms SET status = 'Maintenance', housekeeping_status = 'Maintenance' WHERE room_number = ?", (r_num,))
             elif status in ["Dirty", "Cleaning"]:
@@ -1033,6 +1128,8 @@ def handle_housekeeping():
                     cursor.execute("UPDATE rooms SET status = 'Cleaning', housekeeping_status = ? WHERE room_number = ?", (status, r_num))
                 else:
                     cursor.execute("UPDATE rooms SET housekeeping_status = ? WHERE room_number = ?", (status, r_num))
+            else:
+                cursor.execute("UPDATE rooms SET housekeeping_status = ? WHERE room_number = ?", (status, r_num))
 
             # Upsert into housekeeping table
             cursor.execute("""
@@ -1100,37 +1197,127 @@ def get_dashboard():
 @app.route("/api/reports/export/csv", methods=["GET"])
 def export_csv():
     try:
-        report_type = request.args.get("type", "guests")
+        report_type = request.args.get("type", "guests").lower()
+        start_date = request.args.get("start_date", "").strip()
+        end_date = request.args.get("end_date", "").strip()
+
         conn = get_connection()
         cursor = conn.cursor()
 
         output = io.StringIO()
         writer = csv.writer(output)
 
-        if report_type == "bookings":
-            cursor.execute("SELECT * FROM bookings ORDER BY id DESC")
+        if report_type in ["revenue", "invoices"]:
+            query = """
+            SELECT i.invoice_number, i.booking_id, g.full_name as guest_name, r.room_number,
+                   i.room_charges, i.service_charges, i.tax_amount, i.discount, i.grand_total,
+                   i.advance_paid, i.amount_paid, i.balance_due, i.payment_status, i.issue_date
+            FROM invoices i
+            LEFT JOIN guests g ON i.guest_id = g.id
+            LEFT JOIN rooms r ON i.room_id = r.id
+            """
+            params = []
+            conditions = []
+            if start_date:
+                conditions.append("i.issue_date >= ?")
+                params.append(f"{start_date} 00:00:00")
+            if end_date:
+                conditions.append("i.issue_date <= ?")
+                params.append(f"{end_date} 23:59:59")
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY i.id DESC"
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
-            writer.writerow(["ID", "Code", "Guest ID", "Room ID", "Check-In", "Check-Out", "Status", "Advance"])
+            writer.writerow(["Invoice Number", "Room", "Guest Name", "Room Charges", "Service Charges", "Tax", "Discount", "Grand Total", "Advance Paid", "Amount Paid", "Balance Due", "Status", "Date"])
             for r in rows:
-                writer.writerow([r["id"], r["booking_code"], r["guest_id"], r["room_id"], r["check_in_date"], r["check_out_date"], r["status"], r["advance_payment"]])
-        elif report_type == "rooms":
+                writer.writerow([
+                    r["invoice_number"], r["room_number"], r["guest_name"],
+                    r["room_charges"], r["service_charges"], r["tax_amount"], r["discount"],
+                    r["grand_total"], r["advance_paid"], r["amount_paid"], r["balance_due"],
+                    r["payment_status"], r["issue_date"]
+                ])
+
+        elif report_type in ["checkin", "checkout", "stays"]:
+            query = """
+            SELECT b.booking_code, g.full_name as guest_name, g.phone, r.room_number, r.room_type,
+                   b.check_in_date, b.check_out_date, b.status, b.room_price, b.grand_total, b.advance_payment
+            FROM bookings b
+            JOIN guests g ON b.guest_id = g.id
+            JOIN rooms r ON b.room_id = r.id
+            """
+            params = []
+            conditions = []
+            if report_type == "checkin":
+                conditions.append("b.status IN ('Checked-in', 'Confirmed')")
+            elif report_type == "checkout":
+                conditions.append("b.status = 'Checked-out'")
+            if start_date:
+                conditions.append("b.check_in_date >= ?")
+                params.append(start_date)
+            if end_date:
+                conditions.append("b.check_out_date <= ?")
+                params.append(end_date)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY b.id DESC"
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+            writer.writerow(["Booking Code", "Guest Name", "Phone", "Room", "Type", "Check-In", "Check-Out", "Status", "Room Price", "Grand Total", "Advance"])
+            for r in rows:
+                writer.writerow([
+                    r["booking_code"], r["guest_name"], r["phone"], r["room_number"],
+                    r["room_type"], r["check_in_date"], r["check_out_date"], r["status"],
+                    r["room_price"], r["grand_total"], r["advance_payment"]
+                ])
+
+        elif report_type == "bookings":
+            query = """
+            SELECT b.*, g.full_name as guest_name, r.room_number, r.room_type 
+            FROM bookings b
+            JOIN guests g ON b.guest_id = g.id
+            JOIN rooms r ON b.room_id = r.id
+            """
+            params = []
+            conditions = []
+            if start_date:
+                conditions.append("b.check_in_date >= ?")
+                params.append(start_date)
+            if end_date:
+                conditions.append("b.check_out_date <= ?")
+                params.append(end_date)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY b.id DESC"
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+            writer.writerow(["ID", "Code", "Guest Name", "Room", "Type", "Check-In", "Check-Out", "Adults", "Children", "Status", "Advance", "Grand Total"])
+            for r in rows:
+                writer.writerow([
+                    r["id"], r["booking_code"], r["guest_name"], r["room_number"],
+                    r["room_type"], r["check_in_date"], r["check_out_date"],
+                    r["adults"], r["children"], r["status"], r["advance_payment"], r["grand_total"]
+                ])
+
+        elif report_type in ["occupancy", "rooms"]:
             cursor.execute("SELECT * FROM rooms ORDER BY room_number ASC")
             rows = cursor.fetchall()
-            writer.writerow(["ID", "Room Number", "Type", "Price", "Status", "Housekeeping", "Floor", "Capacity"])
+            writer.writerow(["ID", "Room Number", "Type", "Price", "Front Desk Status", "Housekeeping Status", "Floor", "Capacity"])
             for r in rows:
-                writer.writerow([r["id"], r["room_number"], r["room_type"], r["price_per_night"], r["status"], r["housekeeping_status"], r["floor"], r["capacity"]])
-        elif report_type == "invoices":
-            cursor.execute("SELECT * FROM invoices ORDER BY id DESC")
-            rows = cursor.fetchall()
-            writer.writerow(["ID", "Invoice Number", "Booking ID", "Guest ID", "Grand Total", "Amount Paid", "Status"])
-            for r in rows:
-                writer.writerow([r["id"], r["invoice_number"], r["booking_id"], r["guest_id"], r["grand_total"], r["amount_paid"], r["payment_status"]])
+                writer.writerow([
+                    r["id"], r["room_number"], r["room_type"], r["price_per_night"],
+                    r["status"], r["housekeeping_status"], r["floor"], r["capacity"]
+                ])
+
         else:
             cursor.execute("SELECT * FROM guests ORDER BY id DESC")
             rows = cursor.fetchall()
             writer.writerow(["ID", "Full Name", "Phone", "Email", "City", "Country", "ID Proof", "ID Number"])
             for r in rows:
-                writer.writerow([r["id"], r["full_name"], r["phone"], r["email"], r["city"], r["country"], r["id_proof_type"], r["id_proof_number"]])
+                writer.writerow([
+                    r["id"], r["full_name"], r["phone"], r["email"],
+                    r["city"], r["country"], r["id_proof_type"], r["id_proof_number"]
+                ])
 
         conn.close()
         return Response(
@@ -1139,11 +1326,13 @@ def export_csv():
             headers={"Content-disposition": f"attachment; filename=hotel_{report_type}_report.csv"}
         )
     except Exception as e:
+        traceback.print_exc()
         return api_error("Unable to export CSV report.", 500, error_detail=str(e))
 
 
 # Local Dev Entry Point
 if __name__ == "__main__":
     print(f"\n🚀 Starting Grand Horizon Hotel Enterprise Flask Server ({get_database_type()})...")
-    print("📍 Local URL: http://127.0.0.1:5000\n")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    print("📍 Local URL:   http://127.0.0.1:5000")
+    print("📍 Network URL: http://0.0.0.0:5000\n")
+    app.run(host="0.0.0.0", port=5000, debug=True)
